@@ -1,0 +1,50 @@
+package com.aho.streambrowser.ui
+
+import android.graphics.Color
+import android.view.LayoutInflater
+import android.view.ViewGroup
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.ListAdapter
+import androidx.recyclerview.widget.RecyclerView
+import com.aho.streambrowser.databinding.ItemStreamBinding
+import com.aho.streambrowser.model.StreamItem
+import com.aho.streambrowser.model.StreamType
+
+class StreamAdapter(
+    private val onCopy:  (StreamItem) -> Unit,
+    private val onPlay:  (StreamItem) -> Unit,
+    private val onShare: (StreamItem) -> Unit
+) : ListAdapter<StreamItem, StreamAdapter.VH>(DIFF) {
+
+    inner class VH(private val b: ItemStreamBinding) : RecyclerView.ViewHolder(b.root) {
+        fun bind(item: StreamItem) {
+            b.tvType.text   = item.label
+            b.tvSource.text = "via ${item.source}"
+            b.tvUrl.text    = item.url
+            val (bg, fg) = when (item.type) {
+                StreamType.HLS   -> Color.parseColor("#1B5E20") to Color.parseColor("#C8E6C9")
+                StreamType.MP4   -> Color.parseColor("#0D47A1") to Color.parseColor("#BBDEFB")
+                StreamType.DASH  -> Color.parseColor("#4A148C") to Color.parseColor("#E1BEE7")
+                StreamType.FLV   -> Color.parseColor("#BF360C") to Color.parseColor("#FFCCBC")
+                StreamType.OTHER -> Color.parseColor("#37474F") to Color.parseColor("#ECEFF1")
+            }
+            b.tvType.setBackgroundColor(bg)
+            b.tvType.setTextColor(fg)
+            b.btnCopy.setOnClickListener  { onCopy(item)  }
+            b.btnPlay.setOnClickListener  { onPlay(item)  }
+            b.btnShare.setOnClickListener { onShare(item) }
+        }
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = VH(
+        ItemStreamBinding.inflate(LayoutInflater.from(parent.context), parent, false)
+    )
+    override fun onBindViewHolder(holder: VH, position: Int) = holder.bind(getItem(position))
+
+    companion object {
+        private val DIFF = object : DiffUtil.ItemCallback<StreamItem>() {
+            override fun areItemsTheSame(a: StreamItem, b: StreamItem) = a.url == b.url
+            override fun areContentsTheSame(a: StreamItem, b: StreamItem) = a == b
+        }
+    }
+}

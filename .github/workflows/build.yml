@@ -1,0 +1,48 @@
+name: Build Debug APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Fix Gradle Wrapper JAR
+        run: |
+          curl -sL \
+            "https://github.com/gradle/gradle/raw/v8.4.0/gradle/wrapper/gradle-wrapper.jar" \
+            -o gradle/wrapper/gradle-wrapper.jar
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Build debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: StreamBrowser-debug
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 30

@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0A0A0A">
+
+    <!-- Main content -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <!-- ── Toolbar ─────────────────────────────────────────────────────── -->
+        <LinearLayout
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:orientation="horizontal"
+            android:background="#141414"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="6dp"
+            android:elevation="6dp">
+
+            <!-- Back -->
+            <ImageButton
+                android:id="@+id/btnBack"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_arrow_back"
+                android:background="@drawable/bg_icon_btn"
+                android:enabled="false"
+                android:alpha="0.3"
+                android:contentDescription="Quay lại"
+                android:scaleType="center"/>
+
+            <!-- Forward -->
+            <ImageButton
+                android:id="@+id/btnForward"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_arrow_forward"
+                android:background="@drawable/bg_icon_btn"
+                android:enabled="false"
+                android:alpha="0.3"
+                android:contentDescription="Tiến"
+                android:scaleType="center"
+                android:layout_marginStart="2dp"/>
+
+            <!-- URL bar -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="36dp"
+                android:layout_weight="1"
+                android:layout_marginHorizontal="6dp"
+                android:background="@drawable/bg_url_bar_v2"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="10dp">
+
+                <ImageView
+                    android:id="@+id/ivSecure"
+                    android:layout_width="14dp"
+                    android:layout_height="14dp"
+                    android:src="@drawable/ic_lock"
+                    android:alpha="0.5"
+                    android:layout_marginEnd="5dp"/>
+
+                <EditText
+                    android:id="@+id/etUrl"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@null"
+                    android:inputType="textUri"
+                    android:imeOptions="actionGo"
+                    android:singleLine="true"
+                    android:textSize="12sp"
+                    android:textColor="#E0E0E0"
+                    android:hint="Tìm kiếm hoặc nhập URL"
+                    android:textColorHint="#555555"
+                    android:fontFamily="sans-serif"/>
+
+                <ImageButton
+                    android:id="@+id/btnRefresh"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/ic_refresh"
+                    android:background="@null"
+                    android:alpha="0.6"
+                    android:scaleType="center"
+                    android:contentDescription="Tải lại"/>
+
+            </LinearLayout>
+
+            <!-- Bookmark -->
+            <ImageButton
+                android:id="@+id/btnBookmark"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_bookmark"
+                android:background="@drawable/bg_icon_btn"
+                android:contentDescription="Bookmark"
+                android:scaleType="center"/>
+
+            <!-- Home -->
+            <ImageButton
+                android:id="@+id/btnHome"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:src="@drawable/ic_home"
+                android:background="@drawable/bg_icon_btn"
+                android:contentDescription="Trang chủ"
+                android:scaleType="center"
+                android:layout_marginStart="2dp"/>
+
+        </LinearLayout>
+
+        <!-- ── Progress bar ──────────────────────────────────────────────── -->
+        <ProgressBar
+            android:id="@+id/progressBar"
+            style="@style/Widget.AppCompat.ProgressBar.Horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:max="100"
+            android:progressTint="#1D9E75"
+            android:progressBackgroundTint="#1A1A1A"
+            android:visibility="gone"/>
+
+        <!-- ── WebView ────────────────────────────────────────────────────── -->
+        <WebView
+            android:id="@+id/webView"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"/>
+
+    </LinearLayout>
+
+    <!-- ── DevTools FAB ───────────────────────────────────────────────────── -->
+    <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
+        android:id="@+id/btnDevTools"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="16dp"
+        android:text="DevTools"
+        android:textSize="12sp"
+        android:textColor="#FFFFFF"
+        app:icon="@drawable/ic_devtools"
+        app:iconTint="#FFFFFF"
+        app:backgroundTint="#1D9E75"
+        app:elevation="8dp"/>
+
+    <!-- ── Element Picker floating button ────────────────────────────────── -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/btnPickerFloat"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="16dp"
+        android:src="@drawable/ic_picker"
+        android:contentDescription="Element Picker"
+        app:backgroundTint="#E24B4A"
+        app:tint="#FFFFFF"
+        app:elevation="8dp"
+        android:visibility="gone"/>
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

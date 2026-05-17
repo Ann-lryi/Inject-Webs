@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_browser">#0F0F0F</color>
+    <color name="surface">#1A1A1A</color>
+    <color name="surface2">#242424</color>
+    <color name="divider">#2E2E2E</color>
+    <color name="text_primary">#EFEFEF</color>
+    <color name="text_secondary">#888888</color>
+    <color name="accent_green">#1D9E75</color>
+    <color name="accent_green_dark">#0F6E56</color>
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+</resources>
