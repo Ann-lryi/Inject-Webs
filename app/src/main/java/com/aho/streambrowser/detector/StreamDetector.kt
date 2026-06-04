@@ -262,10 +262,12 @@ class StreamDetector(private val context: Context? = null) {
     }
 }
 
-class BoundedStringBuilder(initial: String = "", private val maxSize: Int = 50000) {
+class BoundedStringBuilder(initial: String = "", private val maxSize: Int = 50000) : CharSequence {
     private val sb = StringBuilder(initial)
     private val prefix = initial
-    val length: Int get() = sb.length
+    override val length: Int get() = sb.length
+    override fun get(index: Int): Char = sb[index]
+    override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = sb.subSequence(startIndex, endIndex)
     fun append(s: String): BoundedStringBuilder {
         sb.append(s)
         if (sb.length > maxSize) {
