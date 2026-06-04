@@ -11,7 +11,15 @@ data class NetworkRequest(
     val isStream: Boolean,
     val streamType: StreamType? = null,
     val timestamp: Long = System.currentTimeMillis(),
-    val bodyPreview: String = ""
+    // ── Response info (populated from JS hooks) ──
+    val statusCode: Int = 0,
+    val responseHeaders: Map<String, String> = emptyMap(),
+    val bodyPreview: String = "",
+    val contentType: String = "",
+    val bodySize: Long = 0,
+    val duration: Long = 0,
+    // ── Source tracking ──
+    val source: String = "network"
 ) {
     companion object {
         private val COUNTER = AtomicLong(0)
@@ -25,12 +33,26 @@ data class NetworkRequest(
         url.contains(".png") || url.contains(".jpg") || url.contains(".webp") -> "IMG"
         url.contains("api")  -> "API"
         url.contains(".json") -> "JSON"
+        url.contains(".m3u8") -> "HLS"
+        url.contains(".mp4")  -> "MP4"
+        url.contains(".mpd")  -> "DASH"
+        url.contains(".flv")  -> "FLV"
         else -> "REQ"
     }
     val tagColor: String get() = when (tag) {
         "HLS","DASH","MP4","FLV","STREAM" -> "#1B5E20"
         "API","JSON" -> "#0D47A1"
         "JS"  -> "#E65100"
+        "CSS" -> "#6A1B9A"
+        "IMG" -> "#37474F"
         else  -> "#37474F"
+    }
+    val statusText: String get() = when {
+        statusCode == 0 -> ""
+        statusCode in 200..299 -> "$statusCode OK"
+        statusCode in 300..399 -> "$statusCode Redirect"
+        statusCode in 400..499 -> "$statusCode Client Error"
+        statusCode in 500..599 -> "$statusCode Server Error"
+        else -> "$statusCode"
     }
 }

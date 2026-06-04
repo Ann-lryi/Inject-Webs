@@ -93,12 +93,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupAddressBar() {
+        // Enter key navigates to URL
         b.etUrl.setOnEditorActionListener { _, actionId, event ->
             val go = actionId == EditorInfo.IME_ACTION_GO ||
                      event?.keyCode == KeyEvent.KEYCODE_ENTER
             if (go) { navigateTo(b.etUrl.text.toString()); true } else false
         }
-        b.etUrl.setOnLongClickListener { showBookmarkHistory(); true }
+        // When URL bar gets focus, select all text so user can easily type a new URL
+        b.etUrl.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) {
+                b.etUrl.selectAll()
+            }
+        }
+        // Single tap also selects all for easy editing (like Chrome browser)
+        b.etUrl.setOnClickListener {
+            b.etUrl.selectAll()
+        }
     }
 
     private fun setupButtons() {
@@ -123,6 +133,7 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Đã bookmark", Toast.LENGTH_SHORT).show()
             }
         }
+        // Long-press bookmark shows bookmark/history list
         b.btnBookmark.setOnLongClickListener { showBookmarkHistory(); true }
 
         // Element picker FAB

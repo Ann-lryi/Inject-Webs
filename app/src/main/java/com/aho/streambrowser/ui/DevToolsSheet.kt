@@ -94,7 +94,7 @@ class DevToolsSheet(
         tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(t: TabLayout.Tab) { currentTab=t.position; contentFrame.removeAllViews(); showTab(t.position) }
             override fun onTabUnselected(t: TabLayout.Tab) {}
-            override fun onTabReselected(t: TabLayout.Tab) {}
+            override fun onTabReselected(t: TabLayout.Tab) { contentFrame.removeAllViews(); showTab(t.position) }
         })
         return outer
     }
@@ -128,15 +128,26 @@ class DevToolsSheet(
         else -> {}
     }
 
-    // ── 1. Network ────────────────────────────────────────────────────────────
+    // ── 1. Network (Enhanced with response info) ──────────────────────────────
     private fun showNetworkTab() {
         val ctx = requireContext()
         val container = col(ctx)
+
+        // Filter row
         val filterRow = row(ctx, "#141414").apply { setPadding(12.dp,6.dp,8.dp,6.dp) }
         val searchBox = editText(ctx, "Lọc URL...")
         val btnX = btn(ctx, "✕", "#888888")
+        // Filter type buttons
+        val btnAll = btn(ctx, "All", "#37474F", "#FFFFFF").apply { setPadding(8.dp,2.dp,8.dp,2.dp) }
+        val btnStream = btn(ctx, "Stream", "#1B5E20", "#FFFFFF").apply { setPadding(8.dp,2.dp,8.dp,2.dp) }
+        val btnApi = btn(ctx, "API", "#0D47A1", "#FFFFFF").apply { setPadding(8.dp,2.dp,8.dp,2.dp) }
+        val btnJs = btn(ctx, "JS", "#E65100", "#FFFFFF").apply { setPadding(8.dp,2.dp,8.dp,2.dp) }
         filterRow.addView(searchBox)
         filterRow.addView(btnX)
+        filterRow.addView(btnAll)
+        filterRow.addView(btnStream)
+        filterRow.addView(btnApi)
+        filterRow.addView(btnJs)
         container.addView(filterRow)
         container.addView(divider(ctx))
 
@@ -147,6 +158,10 @@ class DevToolsSheet(
 
         searchBox.addTextChangedListener(tw { adapter.filter(it) })
         btnX.setOnClickListener { searchBox.setText("") }
+        btnAll.setOnClickListener { adapter.filterByType(null) }
+        btnStream.setOnClickListener { adapter.filterByType("stream") }
+        btnApi.setOnClickListener { adapter.filterByType("api") }
+        btnJs.setOnClickListener { adapter.filterByType("js") }
         contentFrame.addView(container)
     }
 
@@ -212,7 +227,6 @@ class DevToolsSheet(
             "Cookie+Storage"  to "(function(){var r={cookies:document.cookie};try{r.local=[].concat(Object.keys(localStorage)).map(function(k){return k+'='+localStorage.getItem(k)}).join('; ');}catch(e){r.local='blocked';}try{r.session=[].concat(Object.keys(sessionStorage)).map(function(k){return k+'='+sessionStorage.getItem(k)}).join('; ');}catch(e){r.session='blocked';}return JSON.stringify(r,null,2);})()",
             "Tất cả iframes"  to "(function(){var f=[].slice.call(document.querySelectorAll('iframe'));return f.length?f.map(function(el,i){return i+': '+(el.src||el.getAttribute('src')||'no-src');}).join('\\n'):'none';})()",
             "Deep scan"       to "(function(){var html=document.documentElement.innerHTML;var out=[];var pats=[/https?:\\/\\/[^\\s\"'<>]+\\.m3u8[^\\s\"'<>]*/gi,/https?:\\/\\/[^\\s\"'<>]+\\.mp4[^\\s\"'<>]*/gi,/https?:\\/\\/[^\\s\"'<>]+\\.mpd[^\\s\"'<>]*/gi,/https?:\\/\\/[^\\s\"'<>]+\\.flv[^\\s\"'<>]*/gi,/https?:\\/\\/[^\\s\"'<>]*(?:cdn|stream|media|video|vod)[^\\s\"'<>]*/gi];pats.forEach(function(re){re.lastIndex=0;var m;while((m=re.exec(html))!==null&&out.length<30){if(out.indexOf(m[0])===-1)out.push(m[0]);}});return out.length?out.join('\\n'):'nothing found';})()",
-            "Network filter"  to "(function(){var filter=prompt('Enter filter keyword:','m3u8');if(!filter)return 'cancelled';var results=[];if(window.__xhr_log)window.__xhr_log.forEach(function(x){if(x.url.indexOf(filter)!==-1)results.push('XHR '+x.status+' '+x.url);});if(window.__fetch_log)window.__fetch_log.forEach(function(x){if(x.url.indexOf(filter)!==-1)results.push('Fetch '+x.status+' '+x.url);});return results.length?results.join('\\n'):'no match for '+filter;})()",
         )
         addPresets(ctx, container, presets, tv, scroll, detector.deepLog)
         container.addView(divider(ctx))
@@ -223,93 +237,78 @@ class DevToolsSheet(
     // ── 5. HTML Viewer ────────────────────────────────────────────────────────
     private fun showHtmlTab() {
         val ctx = requireContext()
-        val activity = requireActivity() as? MainActivity
+        val activityRef = requireActivity() as? MainActivity
         val container = col(ctx)
 
-        // ── Mode buttons ──────────────────────────────────────────────────────
+        // Mode buttons
         val modeRow = row(ctx, "#141414").apply { setPadding(10.dp, 8.dp, 10.dp, 8.dp) }
-
         val btnFull = Button(ctx).apply {
-            text = "📄 Full HTML"
-            textSize = 11f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#1D9E75"))
-            setPadding(14.dp, 6.dp, 14.dp, 6.dp)
+            text = "📄 Full HTML"; textSize = 11f; setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#1D9E75")); setPadding(14.dp, 6.dp, 14.dp, 6.dp)
         }
         val btnPicker = Button(ctx).apply {
-            text = "✏ Element Picker"
-            textSize = 11f
-            setTextColor(Color.parseColor("#CCCCCC"))
-            setBackgroundColor(Color.parseColor("#E24B4A"))
-            setPadding(14.dp, 6.dp, 14.dp, 6.dp)
+            text = "✏ Element Picker"; textSize = 11f; setTextColor(Color.parseColor("#CCCCCC"))
+            setBackgroundColor(Color.parseColor("#E24B4A")); setPadding(14.dp, 6.dp, 14.dp, 6.dp)
             layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = 8.dp }
         }
         val tvInfo = tv(ctx, "Kết quả hiện qua dialog sau khi chọn element", "#555555", 10f).apply {
             layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f).apply { marginStart = 8.dp }
         }
-        modeRow.addView(btnFull)
-        modeRow.addView(btnPicker)
-        modeRow.addView(tvInfo)
+        modeRow.addView(btnFull); modeRow.addView(btnPicker); modeRow.addView(tvInfo)
         container.addView(modeRow)
         container.addView(divider(ctx))
 
-        // ── Search ────────────────────────────────────────────────────────────
+        // Search
         val searchRow = row(ctx, "#0D0D0D").apply { setPadding(8.dp, 4.dp, 8.dp, 4.dp) }
         val searchBox = EditText(ctx).apply {
-            hint = "🔍  Tìm trong HTML..."
-            setHintTextColor(Color.parseColor("#444444"))
-            setTextColor(Color.parseColor("#EFEFEF"))
-            textSize = 11f; typeface = android.graphics.Typeface.MONOSPACE; background = null
+            hint = "Tìm trong HTML..."; setHintTextColor(Color.parseColor("#444444"))
+            setTextColor(Color.parseColor("#EFEFEF")); textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE; background = null
             layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
         }
         val tvMatch = TextView(ctx).apply {
-            text = ""; setTextColor(Color.parseColor("#1D9E75"))
-            textSize = 10f; typeface = android.graphics.Typeface.MONOSPACE
-            setPadding(8.dp, 0, 0, 0)
+            text = ""; setTextColor(Color.parseColor("#1D9E75")); textSize = 10f
+            typeface = android.graphics.Typeface.MONOSPACE; setPadding(8.dp, 0, 0, 0)
         }
         searchRow.addView(searchBox); searchRow.addView(tvMatch)
-        container.addView(searchRow)
-        container.addView(divider(ctx))
+        container.addView(searchRow); container.addView(divider(ctx))
 
-        // ── Output ────────────────────────────────────────────────────────────
+        // Output
         val scroll = ScrollView(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
             setBackgroundColor(Color.parseColor("#080808"))
         }
         val outputTv = TextView(ctx).apply {
-            text = "📄 Full HTML – lấy toàn bộ HTML trang\n\n✏ Element Picker – đóng panel, tap vào element trên trang → dialog hiện HTML của đúng element đó"
-            setTextColor(Color.parseColor("#555555"))
-            textSize = 11f; typeface = android.graphics.Typeface.MONOSPACE
-            setPadding(14.dp, 14.dp, 14.dp, 14.dp)
+            text = "📄 Full HTML – lấy toàn bộ HTML trang\n\n✏ Element Picker – đóng panel, tap vào element trên trang → dialog hiện HTML"
+            setTextColor(Color.parseColor("#555555")); textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE; setPadding(14.dp, 14.dp, 14.dp, 14.dp)
             setTextIsSelectable(true)
         }
-        scroll.addView(outputTv); container.addView(scroll)
-        container.addView(divider(ctx))
+        scroll.addView(outputTv); container.addView(scroll); container.addView(divider(ctx))
 
-        // ── Action row ────────────────────────────────────────────────────────
+        // Action row
         val actionRow = row(ctx, "#141414").apply { setPadding(8.dp, 6.dp, 8.dp, 6.dp) }
         val btnCopyAll = Button(ctx).apply {
-            text = "Copy All"; textSize = 11f
-            setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#0D47A1"))
-            setPadding(12.dp, 4.dp, 12.dp, 4.dp); isEnabled = false; alpha = 0.4f
+            text = "Copy All"; textSize = 11f; setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#0D47A1")); setPadding(12.dp, 4.dp, 12.dp, 4.dp)
+            isEnabled = false; alpha = 0.4f
         }
         val btnCopy3k = Button(ctx).apply {
-            text = "Copy 3KB"; textSize = 11f
-            setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#4A148C"))
-            setPadding(12.dp, 4.dp, 12.dp, 4.dp)
+            text = "Copy 3KB"; textSize = 11f; setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#4A148C")); setPadding(12.dp, 4.dp, 12.dp, 4.dp)
             layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = 8.dp }
             isEnabled = false; alpha = 0.4f
         }
         val tvSize = TextView(ctx).apply {
-            text = ""; setTextColor(Color.parseColor("#555555"))
-            textSize = 10f; typeface = android.graphics.Typeface.MONOSPACE
+            text = ""; setTextColor(Color.parseColor("#555555")); textSize = 10f
+            typeface = android.graphics.Typeface.MONOSPACE
             layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f).apply { marginStart = 8.dp }
             gravity = Gravity.END
         }
         actionRow.addView(btnCopyAll); actionRow.addView(btnCopy3k); actionRow.addView(tvSize)
         container.addView(actionRow)
 
-        // ── State & logic ─────────────────────────────────────────────────────
+        // State & logic
         var currentHtml = ""
 
         fun displayHtml(html: String) {
@@ -319,7 +318,7 @@ class DevToolsSheet(
             val kb = html.length / 1024f
             tvSize.text = "${String.format("%.1f", kb)} KB"
             btnCopyAll.isEnabled = true; btnCopyAll.alpha = 1f
-            btnCopy3k.isEnabled  = true; btnCopy3k.alpha  = 1f
+            btnCopy3k.isEnabled = true; btnCopy3k.alpha = 1f
             scroll.post { scroll.scrollTo(0, 0) }
         }
 
@@ -334,19 +333,13 @@ class DevToolsSheet(
                         ?.replace("\\n", "\n")?.replace("\\t", "\t")
                         ?.replace("\\\"", "\"")?.replace("\\\\", "\\")
                         ?.replace("\\/", "/") ?: ""
-                    if (html.isEmpty()) {
-                        outputTv.text = "(Không lấy được HTML)"
-                        tvSize.text = "Thất bại"
-                    } else displayHtml(html)
+                    if (html.isEmpty()) { outputTv.text = "(Không lấy được HTML)"; tvSize.text = "Thất bại" }
+                    else displayHtml(html)
                 }
             }
         }
 
-        btnPicker.setOnClickListener {
-            // Đóng sheet, hiện FAB picker nổi trên trang
-            dismiss()
-            activity?.activatePicker()
-        }
+        btnPicker.setOnClickListener { dismiss(); activityRef?.activatePicker() }
 
         btnCopyAll.setOnClickListener {
             if (currentHtml.isEmpty()) return@setOnClickListener
@@ -365,10 +358,7 @@ class DevToolsSheet(
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun afterTextChanged(s: Editable?) {
                 val q = s.toString()
-                if (q.isEmpty() || currentHtml.isEmpty()) {
-                    outputTv.text = currentHtml; tvMatch.text = ""; return
-                }
-                // Use regex for counting instead of split() for better performance
+                if (q.isEmpty() || currentHtml.isEmpty()) { outputTv.text = currentHtml; tvMatch.text = ""; return }
                 val regex = Regex(Regex.escape(q), RegexOption.IGNORE_CASE)
                 val count = regex.findAll(currentHtml).count()
                 tvMatch.text = "$count kết quả"
@@ -385,27 +375,22 @@ class DevToolsSheet(
                 outputTv.text = span
             }
         })
-
         contentFrame.addView(container)
     }
+
     // ── 6. M3U8 Parser ───────────────────────────────────────────────────────
     private fun showM3u8Tab() {
         val ctx = requireContext()
         val container = col(ctx)
-        container.addView(tv(ctx, "Paste URL m3u8 để xem danh sách chất lượng:", "#888888", 11f).apply {
-            setPadding(12.dp,10.dp,12.dp,4.dp)
-        })
+        container.addView(tv(ctx, "Paste URL m3u8 để xem danh sách chất lượng:", "#888888", 11f).apply { setPadding(12.dp,10.dp,12.dp,4.dp) })
 
         val inputRow = row(ctx, "#141414").apply { setPadding(8.dp,6.dp,8.dp,6.dp) }
         val urlBox = editText(ctx, "https://example.com/master.m3u8").apply {
-            // Điền stream đầu tiên nếu có
             detector.streams.firstOrNull { it.url.contains("m3u8") }?.let { setText(it.url) }
         }
         val btnParse = btn(ctx, "Parse", "#1D9E75", "#FFFFFF")
-        inputRow.addView(urlBox)
-        inputRow.addView(btnParse)
-        container.addView(inputRow)
-        container.addView(divider(ctx))
+        inputRow.addView(urlBox); inputRow.addView(btnParse)
+        container.addView(inputRow); container.addView(divider(ctx))
 
         val resultContainer = col(ctx)
         val scrollResult = ScrollView(ctx).apply { layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f) }
@@ -417,12 +402,10 @@ class DevToolsSheet(
             if (url.isEmpty()) return@setOnClickListener
             resultContainer.removeAllViews()
             resultContainer.addView(tv(ctx, "⏳ Đang parse...", "#888888", 11f).apply { setPadding(12.dp,12.dp,12.dp,0) })
-
             scope.launch {
                 val referer = detector.streams.firstOrNull { it.url == url }?.referer ?: ""
                 val qualities = withContext(Dispatchers.IO) {
-                    try { M3u8Parser.parse(url, referer) }
-                    catch (e: Exception) { emptyList() }
+                    try { M3u8Parser.parse(url, referer) } catch (e: Exception) { emptyList() }
                 }
                 resultContainer.removeAllViews()
                 if (qualities.isEmpty()) {
@@ -434,18 +417,14 @@ class DevToolsSheet(
                     val card = col(ctx, "#242424").apply {
                         setPadding(12.dp,10.dp,12.dp,10.dp)
                         val lp = LinearLayout.LayoutParams(MATCH, WRAP)
-                        lp.setMargins(8.dp,4.dp,8.dp,0)
-                        layoutParams = lp
+                        lp.setMargins(8.dp,4.dp,8.dp,0); layoutParams = lp
                     }
                     card.addView(tv(ctx, "📺 ${q.label}", "#EFEFEF", 13f).apply { typeface = android.graphics.Typeface.DEFAULT_BOLD })
                     card.addView(tv(ctx, q.url, "#888888", 10f).apply {
-                        typeface = android.graphics.Typeface.MONOSPACE
-                        maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                        typeface = android.graphics.Typeface.MONOSPACE; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
                     })
                     val btnRow = row(ctx)
-                    btnRow.addView(btn(ctx, "Copy", "#0D47A1", "#FFFFFF").apply {
-                        setOnClickListener { copy(q.url) }
-                    })
+                    btnRow.addView(btn(ctx, "Copy", "#0D47A1", "#FFFFFF").apply { setOnClickListener { copy(q.url) } })
                     btnRow.addView(btn(ctx, "Phát", "#1D9E75", "#FFFFFF").apply {
                         layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = 8.dp }
                         setOnClickListener {
@@ -461,57 +440,35 @@ class DevToolsSheet(
         contentFrame.addView(container)
     }
 
-    // ── 6. Blocker ───────────────────────────────────────────────────────────
+    // ── 7. Blocker ───────────────────────────────────────────────────────────
     private fun showBlockerTab() {
         val ctx = requireContext()
-        // Use blocker passed from MainActivity
         val container = col(ctx)
         container.addView(ScrollView(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
             addView(col(ctx).apply {
                 setPadding(12.dp, 8.dp, 12.dp, 8.dp)
-
-                // Stats
-                addView(tv(ctx, "🚫 Đã block: ${blocker.blockedCount} requests", "#1D9E75", 13f).apply {
-                    setPadding(0, 0, 0, 8.dp)
-                })
-
-                // Builtin toggle
+                addView(tv(ctx, "🚫 Đã block: ${blocker.blockedCount} requests", "#1D9E75", 13f).apply { setPadding(0, 0, 0, 8.dp) })
                 val builtinRow = row(ctx)
-                builtinRow.addView(tv(ctx, "Block ads/trackers mặc định", "#EFEFEF", 12f).apply {
-                    layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
-                })
-                val sw = Switch(ctx).apply {
-                    isChecked = blocker.isBuiltinEnabled()
-                    setOnCheckedChangeListener { _, v -> blocker.setBuiltinEnabled(v) }
-                }
+                builtinRow.addView(tv(ctx, "Block ads/trackers mặc định", "#EFEFEF", 12f).apply { layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f) })
+                val sw = Switch(ctx).apply { isChecked = blocker.isBuiltinEnabled(); setOnCheckedChangeListener { _, v -> blocker.setBuiltinEnabled(v) } }
                 builtinRow.addView(sw)
                 addView(builtinRow)
                 addView(divider(ctx).apply { (layoutParams as LinearLayout.LayoutParams).setMargins(0,8.dp,0,8.dp) })
-
-                // Custom patterns
                 addView(tv(ctx, "Custom patterns:", "#888888", 11f))
                 val patterns = blocker.getCustomPatterns()
                 patterns.forEach { pattern ->
                     val row2 = row(ctx)
-                    row2.addView(tv(ctx, pattern, "#EFEFEF", 11f).apply {
-                        typeface = android.graphics.Typeface.MONOSPACE
-                        layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
-                    })
-                    row2.addView(btn(ctx, "✕", "#E24B4A").apply {
-                        setOnClickListener { blocker.removePattern(pattern); contentFrame.removeAllViews(); showBlockerTab() }
-                    })
+                    row2.addView(tv(ctx, pattern, "#EFEFEF", 11f).apply { typeface = android.graphics.Typeface.MONOSPACE; layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f) })
+                    row2.addView(btn(ctx, "✕", "#E24B4A").apply { setOnClickListener { blocker.removePattern(pattern); contentFrame.removeAllViews(); showBlockerTab() } })
                     addView(row2)
                 }
                 if (patterns.isEmpty()) addView(tv(ctx, "(chưa có pattern tùy chỉnh)", "#555555", 11f))
-
-                // Add pattern
                 addView(divider(ctx).apply { (layoutParams as LinearLayout.LayoutParams).setMargins(0,8.dp,0,8.dp) })
                 val addRow = row(ctx, "#141414").apply { setPadding(8.dp,6.dp,8.dp,6.dp) }
                 val input = editText(ctx, "vd: ads.example.com")
                 val btnAdd = btn(ctx, "Thêm", "#1D9E75", "#FFFFFF")
-                addRow.addView(input)
-                addRow.addView(btnAdd)
+                addRow.addView(input); addRow.addView(btnAdd)
                 addView(addRow)
                 btnAdd.setOnClickListener {
                     val p = input.text.toString().trim()
@@ -522,7 +479,7 @@ class DevToolsSheet(
         contentFrame.addView(container)
     }
 
-    // ── 7. User-Agent ────────────────────────────────────────────────────────
+    // ── 8. User-Agent (Enhanced) ──────────────────────────────────────────────
     private fun showUaTab() {
         val ctx = requireContext()
         val container = col(ctx)
@@ -531,37 +488,34 @@ class DevToolsSheet(
             layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
             addView(col(ctx).apply {
                 setPadding(12.dp, 8.dp, 12.dp, 8.dp)
+                // Current UA display
                 addView(tv(ctx, "Current UA:", "#888888", 10f))
                 addView(tv(ctx, current, "#1D9E75", 10f).apply {
-                    typeface = android.graphics.Typeface.MONOSPACE
-                    maxLines = 3
-                    setPadding(0, 4.dp, 0, 12.dp)
+                    typeface = android.graphics.Typeface.MONOSPACE; maxLines = 3; setPadding(0, 4.dp, 0, 8.dp)
                 })
+                // Client Hints info
+                val secChUa = UserAgentManager.buildSecChUa(current)
+                val secChUaPlatform = UserAgentManager.buildSecChUaPlatform(current)
+                val platform = UserAgentManager.getPlatform(current)
+                val isMobile = UserAgentManager.isMobileUA(current)
+                addView(tv(ctx, "Sec-CH-UA: $secChUa", "#4FC3F7", 9f).apply { typeface = android.graphics.Typeface.MONOSPACE; setPadding(0, 0, 0, 2.dp) })
+                addView(tv(ctx, "Platform: $platform | Mobile: $isMobile", "#4FC3F7", 9f).apply { typeface = android.graphics.Typeface.MONOSPACE; setPadding(0, 0, 0, 8.dp) })
                 addView(divider(ctx))
 
+                // UA preset cards
                 UserAgentManager.presets.forEach { (name, ua) ->
                     val isActive = ua == current
                     val card = col(ctx, if (isActive) "#1A2A1A" else "#242424").apply {
                         setPadding(12.dp, 10.dp, 12.dp, 10.dp)
                         val lp = LinearLayout.LayoutParams(MATCH, WRAP)
-                        lp.setMargins(0, 6.dp, 0, 0)
-                        layoutParams = lp
+                        lp.setMargins(0, 6.dp, 0, 0); layoutParams = lp
                     }
-                    card.addView(tv(ctx, (if (isActive) "✓ " else "") + name, if (isActive) "#1D9E75" else "#EFEFEF", 13f).apply {
-                        typeface = android.graphics.Typeface.DEFAULT_BOLD
-                    })
-                    card.addView(tv(ctx, ua, "#888888", 9f).apply {
-                        typeface = android.graphics.Typeface.MONOSPACE
-                        maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
+                    card.addView(tv(ctx, (if (isActive) "✓ " else "") + name, if (isActive) "#1D9E75" else "#EFEFEF", 13f).apply { typeface = android.graphics.Typeface.DEFAULT_BOLD })
+                    card.addView(tv(ctx, ua.take(80) + if (ua.length > 80) "..." else "", "#888888", 9f).apply {
+                        typeface = android.graphics.Typeface.MONOSPACE; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
                     })
                     card.setOnClickListener {
-                        UserAgentManager.save(ctx, ua)
-                        webView.settings.userAgentString = ua
-                        // Inject JS override navigator.userAgent để bypass site detection
-                        injectUaOverride(ua)
-                        Toast.makeText(ctx, "✓ UA: $name\nTrang sẽ reload để áp dụng", Toast.LENGTH_SHORT).show()
-                        webView.reload()
-                        contentFrame.removeAllViews(); showUaTab()
+                        applyUa(ctx, ua, name)
                     }
                     addView(card)
                 }
@@ -570,28 +524,17 @@ class DevToolsSheet(
                 addView(divider(ctx).apply { (layoutParams as LinearLayout.LayoutParams).setMargins(0, 12.dp, 0, 8.dp) })
                 addView(tv(ctx, "Custom UA:", "#888888", 11f))
                 val customInput = EditText(ctx).apply {
-                    setText(current)
-                    setTextColor(Color.parseColor("#EFEFEF"))
-                    setHintTextColor(Color.parseColor("#555555"))
-                    textSize = 11f
-                    typeface = android.graphics.Typeface.MONOSPACE
-                    background = null
-                    layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
-                    minLines = 2
+                    setText(current); setTextColor(Color.parseColor("#EFEFEF"))
+                    setHintTextColor(Color.parseColor("#555555")); textSize = 11f
+                    typeface = android.graphics.Typeface.MONOSPACE; background = null
+                    layoutParams = LinearLayout.LayoutParams(MATCH, WRAP); minLines = 2
                 }
                 addView(customInput)
                 addView(btn(ctx, "Áp dụng UA này", "#1D9E75", "#FFFFFF").apply {
                     layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = 8.dp }
                     setOnClickListener {
                         val ua2 = customInput.text.toString().trim()
-                        if (ua2.isNotEmpty()) {
-                            UserAgentManager.save(ctx, ua2)
-                            webView.settings.userAgentString = ua2
-                            injectUaOverride(ua2)
-                            webView.reload()
-                            Toast.makeText(ctx, "UA đã cập nhật, đang reload...", Toast.LENGTH_SHORT).show()
-                            contentFrame.removeAllViews(); showUaTab()
-                        }
+                        if (ua2.isNotEmpty()) applyUa(ctx, ua2, "Custom")
                     }
                 })
             })
@@ -599,36 +542,37 @@ class DevToolsSheet(
         contentFrame.addView(container)
     }
 
-    // ── 8. Saved (Bookmark + History) ────────────────────────────────────────
+    private fun applyUa(ctx: Context, ua: String, name: String) {
+        UserAgentManager.save(ctx, ua)
+        webView.settings.userAgentString = ua
+        injectUaOverride(ua)
+        Toast.makeText(ctx, "UA: $name\nTrang sẽ reload", Toast.LENGTH_SHORT).show()
+        webView.reload()
+        contentFrame.removeAllViews(); showUaTab()
+    }
+
+    // ── 9. Saved (Bookmark + History) ────────────────────────────────────────
     private fun showSavedTab() {
         val ctx = requireContext()
-        val activity = requireActivity() as? MainActivity ?: return
+        val activityRef = requireActivity() as? MainActivity ?: return
         val container = col(ctx)
         val bookmarks = BookmarkManager.getBookmarks(ctx)
         val history   = BookmarkManager.getHistory(ctx)
         val all       = bookmarks + history
 
-        if (all.isEmpty()) { contentFrame.addView(centerText(ctx, "Chưa có bookmark/history.\nLong-press nút Home để bookmark trang hiện tại.")); return }
+        if (all.isEmpty()) { contentFrame.addView(centerText(ctx, "Chưa có bookmark/history.\nLong-press nút Bookmark để xem danh sách.")); return }
 
         val rv = RecyclerView(ctx).apply { layoutManager = LinearLayoutManager(ctx); layoutParams = FrameLayout.LayoutParams(MATCH, MATCH) }
         rv.adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
-            inner class VH(
-                val root: LinearLayout,
-                val tvTitle: TextView,
-                val tvUrl: TextView,
-                val btnDel: Button
-            ) : RecyclerView.ViewHolder(root)
+            inner class VH(val root: LinearLayout, val tvTitle: TextView, val tvUrl: TextView, val btnDel: Button) : RecyclerView.ViewHolder(root)
 
             override fun onCreateViewHolder(parent: ViewGroup, t: Int): VH {
                 val title = tv(ctx, "", "#EFEFEF", 12f).apply { typeface = android.graphics.Typeface.DEFAULT_BOLD; maxLines=1; ellipsize=android.text.TextUtils.TruncateAt.END }
                 val url   = tv(ctx, "", "#888888", 10f).apply { typeface=android.graphics.Typeface.MONOSPACE; maxLines=1; ellipsize=android.text.TextUtils.TruncateAt.MIDDLE; layoutParams=LinearLayout.LayoutParams(0,WRAP,1f) }
                 val del   = btn(ctx, "✕", "#E24B4A")
-                val urlRow = row(ctx)
-                urlRow.addView(url)
-                urlRow.addView(del)
+                val urlRow = row(ctx); urlRow.addView(url); urlRow.addView(del)
                 val root2 = col(ctx, "#1A1A1A").apply {
-                    setPadding(12.dp,10.dp,12.dp,10.dp)
-                    addView(title); addView(urlRow)
+                    setPadding(12.dp,10.dp,12.dp,10.dp); addView(title); addView(urlRow)
                     addView(View(ctx).apply { setBackgroundColor(Color.parseColor("#2E2E2E")); layoutParams=LinearLayout.LayoutParams(MATCH,1).apply{topMargin=6.dp} })
                 }
                 return VH(root2, title, url, del)
@@ -636,11 +580,10 @@ class DevToolsSheet(
 
             override fun getItemCount() = all.size
             override fun onBindViewHolder(h: RecyclerView.ViewHolder, pos: Int) {
-                val vh = h as VH
-                val e = all[pos]
+                val vh = h as VH; val e = all[pos]
                 vh.tvTitle.text = (if (e.isBookmark) "★ " else "  ") + e.title
                 vh.tvUrl.text   = e.url
-                vh.root.setOnClickListener { activity.navigateTo(e.url); dismiss() }
+                vh.root.setOnClickListener { activityRef.navigateTo(e.url); dismiss() }
                 vh.btnDel.setOnClickListener {
                     if (e.isBookmark) BookmarkManager.removeBookmark(ctx, e.url)
                     else BookmarkManager.removeHistory(ctx, e.url)
@@ -649,7 +592,6 @@ class DevToolsSheet(
             }
         }
         container.addView(rv)
-        // Clear history button
         val btnClearHist = btn(ctx, "🗑 Xoá lịch sử duyệt", "#E24B4A", "#FFFFFF").apply {
             layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { setMargins(12.dp,8.dp,12.dp,8.dp) }
             setOnClickListener { BookmarkManager.clearHistory(ctx); contentFrame.removeAllViews(); showSavedTab() }
@@ -658,34 +600,84 @@ class DevToolsSheet(
         contentFrame.addView(container)
     }
 
-    // ── Request detail ─────────────────────────────────────────────────────────
+    // ── Request Detail (Enhanced - like DevTools desktop) ──────────────────────
     private fun showRequestDetail(req: NetworkRequest) {
         val ctx = requireContext()
         val sv = ScrollView(ctx)
-        val tvDetail = TextView(ctx).apply {
-            text = buildString {
-                appendLine("URL:"); appendLine(req.url); appendLine()
-                appendLine("Method: ${req.method}")
-                appendLine()
-                appendLine("Headers:")
-                if (req.headers.isEmpty()) appendLine("  (none)")
-                else req.headers.forEach { (k,v) -> appendLine("  $k: $v") }
-            }
-            setTextColor(Color.parseColor("#EFEFEF"))
-            setBackgroundColor(Color.parseColor("#0D0D0D"))
-            textSize = 11f
-            typeface = android.graphics.Typeface.MONOSPACE
-            setPadding(16.dp,16.dp,16.dp,16.dp)
-            setTextIsSelectable(true)
+
+        // Tab-like layout: General | Headers | Response | Timing
+        val container = col(ctx, "#0D0D0D")
+
+        // ── General Info ──
+        container.addView(sectionHeader(ctx, "GENERAL"))
+        container.addView(infoRow(ctx, "URL", req.url))
+        container.addView(infoRow(ctx, "Method", req.method))
+        container.addView(infoRow(ctx, "Status", req.statusText.ifEmpty { "N/A" }))
+        container.addView(infoRow(ctx, "Source", req.source))
+        container.addView(infoRow(ctx, "Type", req.tag))
+        if (req.contentType.isNotEmpty())
+            container.addView(infoRow(ctx, "Content-Type", req.contentType))
+        if (req.duration > 0)
+            container.addView(infoRow(ctx, "Duration", "${req.duration}ms"))
+
+        // ── Request Headers ──
+        container.addView(sectionHeader(ctx, "REQUEST HEADERS"))
+        if (req.headers.isEmpty()) {
+            container.addView(tv(ctx, "  (không có)", "#555555", 10f).apply { setPadding(0,4.dp,0,4.dp) })
+        } else {
+            req.headers.forEach { (k, v) -> container.addView(infoRow(ctx, k, v)) }
         }
-        sv.addView(tvDetail)
+
+        // ── Response Headers ──
+        if (req.responseHeaders.isNotEmpty()) {
+            container.addView(sectionHeader(ctx, "RESPONSE HEADERS"))
+            req.responseHeaders.forEach { (k, v) -> container.addView(infoRow(ctx, k, v)) }
+        }
+
+        // ── Response Body Preview ──
+        if (req.bodyPreview.isNotEmpty()) {
+            container.addView(sectionHeader(ctx, "RESPONSE BODY (preview)"))
+            val bodyTv = TextView(ctx).apply {
+                text = req.bodyPreview.take(2000)
+                setTextColor(Color.parseColor("#00FF41")); textSize = 10f
+                typeface = android.graphics.Typeface.MONOSPACE
+                setPadding(12.dp, 8.dp, 12.dp, 8.dp)
+                setTextIsSelectable(true)
+                maxLines = 20
+            }
+            container.addView(bodyTv)
+        }
+
+        sv.addView(container)
         AlertDialog.Builder(ctx)
-            .setTitle("Request")
+            .setTitle("Request Detail")
             .setView(sv)
             .setPositiveButton("Copy URL")      { _,_ -> copy(req.url) }
             .setNeutralButton("Export cURL")    { _,_ -> copy(CurlExporter.toCurl(req)) }
             .setNegativeButton("Đóng", null)
             .show()
+    }
+
+    private fun sectionHeader(ctx: Context, title: String) = TextView(ctx).apply {
+        text = title; setTextColor(Color.parseColor("#1D9E75")); textSize = 11f
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        setPadding(12.dp, 10.dp, 12.dp, 4.dp)
+        setBackgroundColor(Color.parseColor("#141414"))
+    }
+
+    private fun infoRow(ctx: Context, key: String, value: String) = row(ctx).apply {
+        setPadding(12.dp, 2.dp, 12.dp, 2.dp)
+        addView(TextView(ctx).apply {
+            text = "$key: "; setTextColor(Color.parseColor("#4FC3F7")); textSize = 10f
+            typeface = android.graphics.Typeface.MONOSPACE
+            layoutParams = LinearLayout.LayoutParams(WRAP, WRAP)
+        })
+        addView(TextView(ctx).apply {
+            text = value; setTextColor(Color.parseColor("#EFEFEF")); textSize = 10f
+            typeface = android.graphics.Typeface.MONOSPACE
+            layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
+            setTextIsSelectable(true)
+        })
     }
 
     // ── Shared helpers ────────────────────────────────────────────────────────
@@ -695,10 +687,8 @@ class DevToolsSheet(
         val row2 = row(ctx).apply { setPadding(8.dp,4.dp,8.dp,4.dp) }
         presets.forEach { (label, code) ->
             row2.addView(Button(ctx).apply {
-                text=label; textSize=10f
-                setTextColor(Color.parseColor("#4FC3F7"))
-                setBackgroundColor(Color.parseColor("#0A1929"))
-                setPadding(10.dp,4.dp,10.dp,4.dp)
+                text=label; textSize=10f; setTextColor(Color.parseColor("#4FC3F7"))
+                setBackgroundColor(Color.parseColor("#0A1929")); setPadding(10.dp,4.dp,10.dp,4.dp)
                 layoutParams = LinearLayout.LayoutParams(WRAP,WRAP).apply { marginEnd=6.dp }
                 setOnClickListener { runJs(code, tv, scroll, log, label) }
             })
@@ -742,7 +732,7 @@ class DevToolsSheet(
         val btnClear = btn(ctx, "🗑", "#E24B4A").apply {
             setOnClickListener {
                 log.clear(); log.append(if (isDeep) "// Deep Inject\n" else "// Console\n")
-                outputTv.text = log
+                outputTv.text = log.toString()
             }
         }
         listOf(prefix, jsInput, btnUp, btnDown, btnRun, btnClear).forEach { inputRow.addView(it) }
@@ -750,7 +740,7 @@ class DevToolsSheet(
     }
 
     private fun runJs(code: String, output: TextView, scroll: ScrollView, log: BoundedStringBuilder, label: String) {
-        log.append("\n▶ $label\n"); output.text = log
+        log.append("\n▶ $label\n"); output.text = log.toString()
         webView.evaluateJavascript(code) { result ->
             requireActivity().runOnUiThread {
                 val d = when {
@@ -759,7 +749,7 @@ class DevToolsSheet(
                         result.removeSurrounding("\"").replace("\\n","\n").replace("\\t","\t").replace("\\\"","\"").replace("\\\\","\\")
                     else -> result
                 }
-                log.append("$d\n"); output.text = log
+                log.append("$d\n"); output.text = log.toString()
                 scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
             }
         }
@@ -767,80 +757,211 @@ class DevToolsSheet(
 
     private fun outputArea(ctx: Context, log: BoundedStringBuilder, color: String): Pair<ScrollView, TextView> {
         val tv2 = TextView(ctx).apply {
-            text=log; setTextColor(Color.parseColor(color))
+            text=log.toString(); setTextColor(Color.parseColor(color))
             textSize=11f; typeface=android.graphics.Typeface.MONOSPACE
             setPadding(12.dp,12.dp,12.dp,12.dp); setTextIsSelectable(true)
         }
         val sv = ScrollView(ctx).apply {
             layoutParams=LinearLayout.LayoutParams(MATCH,0,1f)
-            setBackgroundColor(Color.parseColor("#0D0D0D"))
-            addView(tv2)
+            setBackgroundColor(Color.parseColor("#0D0D0D")); addView(tv2)
         }
         sv.post { sv.fullScroll(View.FOCUS_DOWN) }
         return sv to tv2
     }
 
     /**
-     * Override navigator.userAgent + các thuộc tính liên quan ở tầng JS.
-     * Cần thiết vì sites bảo mật cao detect UA qua JS chứ không chỉ HTTP header.
-     * Inject trước khi reload để có hiệu lực ngay từ đầu.
+     * Deep UA override: navigator properties, Sec-CH-UA Client Hints,
+     * WebGL renderer, screen info, connection info.
+     * This bypasses sophisticated bot detection used by major sites.
      */
     private fun injectUaOverride(ua: String) {
-        val isMobile  = ua.contains("Mobile") || ua.contains("Android") || ua.contains("iPhone")
-        val isChrome  = ua.contains("Chrome")
-        val chromeVer = Regex("Chrome/([\\d.]+)").find(ua)?.groupValues?.get(1) ?: "124.0.0.0"
-        val major     = chromeVer.split(".").firstOrNull() ?: "124"
-        val platform  = when {
-            ua.contains("Windows") -> "Win32"
-            ua.contains("Mac")     -> "MacIntel"
-            ua.contains("Linux") || ua.contains("Android") -> "Linux ${if (isMobile) "arm" else "x86_64"}"
-            else -> "Linux x86_64"
+        val isMobile  = UserAgentManager.isMobileUA(ua)
+        val isChrome  = UserAgentManager.isChromeUA(ua)
+        val major     = UserAgentManager.extractMajorVersion(ua)
+        val platform  = UserAgentManager.getPlatform(ua)
+        val vendor    = UserAgentManager.getVendor(ua)
+        val secChUa   = UserAgentManager.buildSecChUa(ua)
+        val secChUaPlatform = UserAgentManager.buildSecChUaPlatform(ua)
+        val mobileStr = if (isMobile) "?1" else "?0"
+
+        // WebGL renderer based on UA type
+        val glRenderer = when {
+            ua.contains("Windows") -> "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)"
+            ua.contains("Mac")     -> "Apple GPU"
+            ua.contains("Pixel 8") -> "Adreno (TM) 740"
+            ua.contains("Android") -> "Adreno (TM) 640"
+            else -> "ANGLE (Intel, Intel(R) UHD Graphics 630)"
         }
-        val vendor = if (isChrome) "Google Inc." else ""
-        val secUa = if (isChrome) "\"Chromium\";v=\"$major\", \"Google Chrome\";v=\"$major\", \"Not-A.Brand\";v=\"99\"" else ""
+        val glVendor = when {
+            ua.contains("Mac") -> "Apple Inc."
+            else -> "Google Inc. (Intel)"
+        }
+
+        // Screen resolution
+        val (screenW, screenH, colorDepth) = when {
+            ua.contains("Pixel 8") -> Triple(1080, 2400, 24)
+            ua.contains("iPhone")  -> Triple(1170, 2532, 24)
+            ua.contains("SMART-TV") -> Triple(1920, 1080, 24)
+            isMobile -> Triple(1080, 2400, 24)
+            else -> Triple(1920, 1080, 24)
+        }
 
         val js = """
 (function() {
     var ua = ${ua.let { "\"${it.replace("\"", "\\\"")}\"" }};
     var platform = "$platform";
     var vendor = "$vendor";
+    var major = "$major";
+    var secChUa = $secChUa;
+    var secChUaPlatform = $secChUaPlatform;
+    var isMobile = $isMobile;
+    var mobileStr = "$mobileStr";
+    var glRenderer = "$glRenderer";
+    var glVendor = "$glVendor";
 
-    // Override navigator properties
-    var props = {
-        userAgent:   { get: function() { return ua; } },
-        platform:    { get: function() { return platform; } },
-        vendor:      { get: function() { return vendor; } },
-        appVersion:  { get: function() { return ua.replace('Mozilla/', ''); } },
-        appName:     { get: function() { return 'Netscape'; } },
-        webdriver:   { get: function() { return false; } },
-        plugins:     { get: function() {
+    // ── 1. Override navigator properties ─────────────────────────────────────
+    var navProps = {
+        userAgent:      { get: function() { return ua; } },
+        platform:       { get: function() { return platform; } },
+        vendor:         { get: function() { return vendor; } },
+        appVersion:     { get: function() { return ua.replace('Mozilla/', ''); } },
+        appName:        { get: function() { return 'Netscape'; } },
+        productSub:     { get: function() { return '20030107'; } },
+        webdriver:      { get: function() { return false; } },
+        deviceMemory:   { get: function() { return isMobile ? 8 : 8; } },
+        hardwareConcurrency: { get: function() { return isMobile ? 8 : 8; } },
+        maxTouchPoints: { get: function() { return isMobile ? 5 : 0; } },
+        connection:     { get: function() { return { effectiveType: '4g', rtt: 50, downlink: 10, saveData: false }; } },
+        plugins:        { get: function() {
             return Object.create(PluginArray.prototype, {
-                length: { get: function() { return 3; } },
+                length: { get: function() { return 5; } },
+                item:   { value: function(i) { return null; } },
+                namedItem: { value: function(n) { return null; } },
+                refresh: { value: function() {} }
+            });
+        }},
+        mimeTypes: { get: function() {
+            return Object.create(MimeTypeArray.prototype, {
+                length: { get: function() { return 2; } },
                 item:   { value: function(i) { return null; } },
                 namedItem: { value: function(n) { return null; } }
             });
         }},
-        languages:   { get: function() { return ['vi-VN', 'vi', 'en-US', 'en']; } }
+        languages:   { get: function() { return ['vi-VN', 'vi', 'en-US', 'en']; } },
+        language:    { get: function() { return 'vi-VN'; } }
     };
-    Object.entries(props).forEach(function(e) {
-        try { Object.defineProperty(navigator, e[0], e[1]); } catch(ex) {}
+    Object.entries(navProps).forEach(function(e) {
+        try { Object.defineProperty(navigator, e[0], Object.assign({ configurable: true }, e[1])); } catch(ex) {}
     });
 
-    // Remove webdriver traces
-    try { delete window.navigator.__proto__.webdriver; } catch(e) {}
-    try { delete window.callPhantom; } catch(e) {}
-    try { delete window._phantom; } catch(e) {}
-    try { delete window.__nightmare; } catch(e) {}
-    try { delete window.Buffer; } catch(e) {}
-    try { delete window.emit; } catch(e) {}
-    try { delete window.spawn; } catch(e) {}
+    // ── 2. Override toString to bypass detection ─────────────────────────────
+    try { navigator.userAgent.toString = function() { return ua; }; } catch(e) {}
+    try { navigator.appVersion.toString = function() { return ua.replace('Mozilla/', ''); }; } catch(e) {}
 
-    // Override toString để bypass detection
-    window.navigator.userAgent.toString = function() { return ua; };
+    // ── 3. Override Sec-CH-UA Client Hints (crucial for Netflix, Disney+, etc.) ─
+    try {
+        Object.defineProperty(navigator, 'userAgentData', {
+            get: function() {
+                return {
+                    brands: [
+                        { brand: "Chromium", version: major },
+                        { brand: "Google Chrome", version: major },
+                        { brand: "Not-A.Brand", version: "99" }
+                    ],
+                    mobile: isMobile,
+                    platform: secChUaPlatform.replace(/"/g, ''),
+                    getHighEntropyValues: function(hints) {
+                        return Promise.resolve({
+                            brands: this.brands,
+                            mobile: this.mobile,
+                            platform: this.platform.replace(/"/g, ''),
+                            platformVersion: "14.0.0",
+                            architecture: isMobile ? "arm" : "x86",
+                            bitness: "64",
+                            model: isMobile ? "Pixel 8" : "",
+                            uaFullVersion: major + ".0.0.0",
+                            wow64: false
+                        });
+                    },
+                    toJSON: function() {
+                        return { brands: this.brands, mobile: this.mobile, platform: this.platform.replace(/"/g, '') };
+                    }
+                };
+            },
+            configurable: true
+        });
+    } catch(e) {}
+
+    // ── 4. Override WebGL renderer (fingerprint bypass) ──────────────────────
+    try {
+        var getParamOrig = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function(param) {
+            if (param === 37445) return glVendor;   // UNMASKED_VENDOR_WEBGL
+            if (param === 37446) return glRenderer;  // UNMASKED_RENDERER_WEBGL
+            return getParamOrig.call(this, param);
+        };
+        var getParamOrig2 = WebGL2RenderingContext.prototype.getParameter;
+        WebGL2RenderingContext.prototype.getParameter = function(param) {
+            if (param === 37445) return glVendor;
+            if (param === 37446) return glRenderer;
+            return getParamOrig2.call(this, param);
+        };
+    } catch(e) {}
+
+    // ── 5. Override screen properties (match UA screen resolution) ───────────
+    try {
+        var sw=$screenW, sh=$screenH, cd=$colorDepth;
+        Object.defineProperties(screen, {
+            width:           { get: function(){ return sw; }, configurable: true },
+            height:          { get: function(){ return sh; }, configurable: true },
+            availWidth:      { get: function(){ return sw; }, configurable: true },
+            availHeight:     { get: function(){ return sh - (isMobile ? 0 : 40); }, configurable: true },
+            colorDepth:      { get: function(){ return cd; }, configurable: true },
+            pixelDepth:      { get: function(){ return cd; }, configurable: true },
+            orientation:     { get: function(){ return { type: isMobile ? 'portrait-primary' : 'landscape-primary', angle: 0 }; }, configurable: true }
+        });
+    } catch(e) {}
+
+    // ── 6. Remove automation/bot traces ──────────────────────────────────────
+    ['callPhantom','_phantom','__nightmare','Buffer','domAutomation',
+     'domAutomationController','spawn','emit','awesomium','cdc_adoQpoasnfa76pfcZLmcfl_Array',
+     'cdc_adoQpoasnfa76pfcZLmcfl_Promise','cdc_adoQpoasnfa76pfcZLmcfl_Symbol'].forEach(function(k){
+        try { delete window[k]; } catch(e) {}
+    });
+    try { delete window.navigator.__proto__.webdriver; } catch(e) {}
+    try { delete window.document.__proto__.webdriver; } catch(e) {}
+
+    // ── 7. Fix chrome runtime ────────────────────────────────────────────────
+    if (!window.chrome) {
+        window.chrome = {};
+    }
+    if (!window.chrome.runtime) {
+        window.chrome.runtime = {
+            connect: function() {},
+            sendMessage: function() {},
+            onMessage: { addListener: function() {} },
+            id: undefined
+        };
+    }
+    if (!window.chrome.app) {
+        window.chrome.app = { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } };
+    }
+    if (!window.chrome.csi) { window.chrome.csi = function() {}; }
+    if (!window.chrome.loadTimes) { window.chrome.loadTimes = function() { return { firstPaintTime: 0, startLoadTime: 0, commitLoadTime: 0, finishDocumentLoadTime: 0, finishLoadTime: 0, requestTime: 0 }; }; }
+
+    // ── 8. Override permissions API ──────────────────────────────────────────
+    try {
+        var origQuery = Permissions.prototype.query;
+        Permissions.prototype.query = function(desc) {
+            if (desc && desc.name === 'notifications') {
+                return Promise.resolve({ state: Notification.permission });
+            }
+            return origQuery.call(this, desc);
+        };
+    } catch(e) {}
 })();
 """.trimIndent()
 
-        // Inject vào trang hiện tại
         webView.evaluateJavascript(js, null)
     }
 
@@ -863,8 +984,7 @@ class DevToolsSheet(
         text=label; textSize=11f
         setTextColor(if(fg==bg) Color.parseColor("#888888") else Color.parseColor(fg))
         if(fg!=bg) setBackgroundColor(Color.parseColor(bg)) else background=null
-        setPadding(10.dp,4.dp,10.dp,4.dp)
-        layoutParams=LinearLayout.LayoutParams(WRAP,WRAP)
+        setPadding(10.dp,4.dp,10.dp,4.dp); layoutParams=LinearLayout.LayoutParams(WRAP,WRAP)
     }
     private fun editText(ctx: Context, hint: String) = EditText(ctx).apply {
         this.hint=hint; setHintTextColor(Color.parseColor("#444444")); setTextColor(Color.parseColor("#EFEFEF"))
@@ -876,8 +996,7 @@ class DevToolsSheet(
     }
     private fun centerText(ctx: Context, text: String) = TextView(ctx).apply {
         this.text=text; setTextColor(Color.parseColor("#888888")); textSize=13f; gravity=Gravity.CENTER
-        setPadding(24.dp,48.dp,24.dp,0)
-        layoutParams=FrameLayout.LayoutParams(MATCH,MATCH)
+        setPadding(24.dp,48.dp,24.dp,0); layoutParams=FrameLayout.LayoutParams(MATCH,MATCH)
     }
     private fun tw(fn: (String)->Unit) = object:TextWatcher {
         override fun afterTextChanged(s: Editable?) { fn(s.toString()) }
@@ -900,37 +1019,78 @@ class DevToolsSheet(
     companion object { const val TAG = "DevToolsSheet" }
 }
 
-// ── NetworkAdapter ────────────────────────────────────────────────────────────
+// ── NetworkAdapter (Enhanced with type filtering) ────────────────────────────
 class NetworkAdapter(
     private val allItems: List<NetworkRequest>,
     private val onClick: (NetworkRequest) -> Unit
 ) : RecyclerView.Adapter<NetworkAdapter.VH>() {
 
     private var displayed = allItems.toMutableList()
+    private var currentFilter: String? = null
+    private var searchText: String = ""
 
     fun filter(q: String) {
-        displayed = if(q.isBlank()) allItems.toMutableList()
-        else allItems.filter{it.url.contains(q,true)}.toMutableList()
+        searchText = q
+        applyFilters()
+    }
+
+    fun filterByType(type: String?) {
+        currentFilter = type
+        applyFilters()
+    }
+
+    private fun applyFilters() {
+        displayed = allItems.filter { item ->
+            val matchesSearch = searchText.isBlank() || item.url.contains(searchText, true)
+            val matchesType = when {
+                currentFilter == null -> true
+                currentFilter == "stream" -> item.isStream
+                currentFilter == "api" -> item.tag == "API" || item.tag == "JSON"
+                currentFilter == "js" -> item.tag == "JS"
+                else -> true
+            }
+            matchesSearch && matchesType
+        }.toMutableList()
         notifyDataSetChanged()
     }
 
-    inner class VH(root: View, val tvTag:TextView, val tvHost:TextView, val tvPath:TextView): RecyclerView.ViewHolder(root)
+    inner class VH(root: View, val tvTag:TextView, val tvStatus:TextView, val tvHost:TextView, val tvPath:TextView, val tvTime:TextView): RecyclerView.ViewHolder(root)
 
     override fun onCreateViewHolder(parent: ViewGroup, t: Int): VH {
         val ctx = parent.context; val d=ctx.resources.displayMetrics.density; fun Int.dp()=(this*d).toInt()
-        val tvTag  = TextView(ctx).apply{textSize=9f;typeface=android.graphics.Typeface.DEFAULT_BOLD;setPadding(6.dp(),2.dp(),6.dp(),2.dp());minWidth=52.dp();gravity=Gravity.CENTER;layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{marginEnd=8.dp()}}
-        val tvHost = TextView(ctx).apply{setTextColor(Color.parseColor("#EFEFEF"));textSize=11f;typeface=android.graphics.Typeface.DEFAULT_BOLD;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END}
-        val tvPath = TextView(ctx).apply{setTextColor(Color.parseColor("#888888"));textSize=10f;typeface=android.graphics.Typeface.MONOSPACE;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.MIDDLE}
-        val info   = LinearLayout(ctx).apply{orientation=LinearLayout.VERTICAL;layoutParams=LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1f);addView(tvHost);addView(tvPath)}
-        val row    = LinearLayout(ctx).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setPadding(12.dp(),10.dp(),12.dp(),10.dp());setBackgroundColor(Color.parseColor("#1A1A1A"));addView(tvTag);addView(info)}
-        val root   = LinearLayout(ctx).apply{orientation=LinearLayout.VERTICAL;layoutParams=ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);addView(row);addView(View(ctx).apply{setBackgroundColor(Color.parseColor("#252525"));layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,1)})}
-        return VH(root,tvTag,tvHost,tvPath)
+        val tvTag    = TextView(ctx).apply{textSize=9f;typeface=android.graphics.Typeface.DEFAULT_BOLD;setPadding(6.dp(),2.dp(),6.dp(),2.dp());minWidth=44.dp();gravity=Gravity.CENTER;layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{marginEnd=6.dp()}}
+        val tvStatus = TextView(ctx).apply{textSize=9f;typeface=android.graphics.Typeface.DEFAULT_BOLD;gravity=Gravity.CENTER;minWidth=32.dp();setPadding(4.dp(),2.dp(),4.dp(),2.dp());layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{marginEnd=6.dp()}}
+        val tvHost   = TextView(ctx).apply{setTextColor(Color.parseColor("#EFEFEF"));textSize=11f;typeface=android.graphics.Typeface.DEFAULT_BOLD;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END}
+        val tvPath   = TextView(ctx).apply{setTextColor(Color.parseColor("#888888"));textSize=10f;typeface=android.graphics.Typeface.MONOSPACE;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.MIDDLE}
+        val tvTime   = TextView(ctx).apply{setTextColor(Color.parseColor("#555555"));textSize=9f;typeface=android.graphics.Typeface.MONOSPACE;layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT)}
+        val info     = LinearLayout(ctx).apply{orientation=LinearLayout.VERTICAL;layoutParams=LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1f);addView(tvHost);addView(tvPath)}
+        val row      = LinearLayout(ctx).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setPadding(12.dp(),8.dp(),12.dp(),8.dp());setBackgroundColor(Color.parseColor("#1A1A1A"));addView(tvTag);addView(tvStatus);addView(info);addView(tvTime)}
+        val root     = LinearLayout(ctx).apply{orientation=LinearLayout.VERTICAL;layoutParams=ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);addView(row);addView(View(ctx).apply{setBackgroundColor(Color.parseColor("#252525"));layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,1)})}
+        return VH(root,tvTag,tvStatus,tvHost,tvPath,tvTime)
     }
+
     override fun getItemCount() = displayed.size
     override fun onBindViewHolder(h: VH, pos: Int) {
         val req=displayed[pos]
         h.tvTag.text=req.tag; h.tvTag.setBackgroundColor(Color.parseColor(req.tagColor)); h.tvTag.setTextColor(Color.WHITE)
+        // Status badge
+        if (req.statusCode > 0) {
+            h.tvStatus.text = "${req.statusCode}"
+            h.tvStatus.setTextColor(Color.parseColor(
+                when {
+                    req.statusCode in 200..299 -> "#4CAF50"
+                    req.statusCode in 300..399 -> "#FF9800"
+                    req.statusCode in 400..499 -> "#F44336"
+                    req.statusCode >= 500 -> "#E24B4A"
+                    else -> "#888888"
+                }
+            ))
+        } else {
+            h.tvStatus.text = "—"
+            h.tvStatus.setTextColor(Color.parseColor("#555555"))
+        }
         h.tvHost.text=req.host; h.tvPath.text=req.path
+        h.tvTime.text = if (req.duration > 0) "${req.duration}ms" else ""
         h.itemView.setOnClickListener{onClick(req)}
     }
 }

@@ -24,7 +24,7 @@ val HOOK_JS = """
     } catch(e) {}
 
     // ── Stream detection core ──────────────────────────────────────────────────
-    function report(url, src, method) {
+    function report(url, src, method, extra) {
         try {
             if (!url || typeof url !== 'string') return;
             url = url.trim();
@@ -40,15 +40,97 @@ val HOOK_JS = """
         } catch(e) {}
     }
 
-    // ── Hook XHR ──────────────────────────────────────────────────────────────
-    var _open = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function(method, url) { report(url,'xhr',method); return _open.apply(this,arguments); };
+    // ── Report with response data ────────────────────────────────────────────
+    function reportWithResponse(url, src, method, status, respHeaders, bodyPreview, contentType, duration) {
+        try {
+            if (!url || typeof url !== 'string') return;
+            url = url.trim();
+            if (!url.startsWith('http') && !url.startsWith('//')) return;
+            if (url.startsWith('//')) url = 'https:' + url;
+            SBridge.onRequestWithResponse(url, src || 'js', method || 'GET',
+                status || 0, respHeaders || '', bodyPreview || '', contentType || '', duration || 0);
+        } catch(e) {}
+    }
 
-    // ── Hook Fetch ────────────────────────────────────────────────────────────
+    // ── Parse response headers from getAllResponseHeaders() ──────────────────
+    function parseHeaders(headerStr) {
+        var headers = {};
+        if (!headerStr) return headers;
+        var pairs = headerStr.trim().split('\r\n');
+        pairs.forEach(function(pair) {
+            var idx = pair.indexOf(':');
+            if (idx > 0) {
+                var key = pair.substring(0, idx).trim().toLowerCase();
+                var val = pair.substring(idx + 1).trim();
+                headers[key] = val;
+            }
+        });
+        return headers;
+    }
+
+    // ── Hook XHR with response capture ──────────────────────────────────────
+    var _open = XMLHttpRequest.prototype.open;
+    var _send = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function(method, url) {
+        this.__sb_method = method;
+        this.__sb_url = url;
+        this.__sb_startTime = Date.now();
+        report(url,'xhr',method);
+        return _open.apply(this,arguments);
+    };
+    XMLHttpRequest.prototype.send = function(body) {
+        var self = this;
+        this.addEventListener('load', function() {
+            try {
+                var headers = parseHeaders(self.getAllResponseHeaders());
+                var headerStr = self.getAllResponseHeaders() || '';
+                var ct = headers['content-type'] || '';
+                var bodyPreview = '';
+                try { bodyPreview = (self.responseText || '').substring(0, 2000); } catch(e) {}
+                reportWithResponse(
+                    self.__sb_url || self.responseURL || '',
+                    'xhr',
+                    self.__sb_method || 'GET',
+                    self.status,
+                    headerStr,
+                    bodyPreview,
+                    ct,
+                    Date.now() - (self.__sb_startTime || Date.now())
+                );
+            } catch(e) {}
+        });
+        return _send.apply(this,arguments);
+    };
+
+    // ── Hook Fetch with response capture ────────────────────────────────────
     var _fetch = window.fetch;
     window.fetch = function(input, init) {
-        var url = typeof input==='string'?input:(input&&input.url); var m=(init&&init.method)||'GET';
-        report(url,'fetch',m); return _fetch.apply(this,arguments);
+        var url = typeof input==='string'?input:(input&&input.url);
+        var m = (init&&init.method)||'GET';
+        var startTime = Date.now();
+        report(url,'fetch',m);
+        return _fetch.apply(this,arguments).then(function(response) {
+            try {
+                var respUrl = response.url || url || '';
+                var headerStr = '';
+                response.headers.forEach(function(val, key) {
+                    headerStr += key + ': ' + val + '\r\n';
+                });
+                var ct = response.headers.get('content-type') || '';
+                // Clone and read body preview for text responses
+                if (ct && (ct.indexOf('text') !== -1 || ct.indexOf('json') !== -1 || ct.indexOf('javascript') !== -1 || ct.indexOf('xml') !== -1)) {
+                    var cloned = response.clone();
+                    cloned.text().then(function(text) {
+                        reportWithResponse(respUrl, 'fetch', m, response.status, headerStr, (text||'').substring(0, 2000), ct, Date.now() - startTime);
+                    }).catch(function() {
+                        reportWithResponse(respUrl, 'fetch', m, response.status, headerStr, '', ct, Date.now() - startTime);
+                    });
+                } else {
+                    reportWithResponse(respUrl, 'fetch', m, response.status, headerStr, '', ct, Date.now() - startTime);
+                }
+            } catch(e) {}
+            return response;
+        });
     };
 
     // ── Hook HTMLMediaElement.src ─────────────────────────────────────────────
@@ -130,17 +212,13 @@ val HOOK_JS = """
 
     // ── DOM scan delayed (catch dynamic content) ─────────────────────────────
     [1000,3000,6000,10000].forEach(function(t){setTimeout(function(){
-        // Scan video/source elements
         document.querySelectorAll('video,source,iframe').forEach(function(el){
             var s=el.src||el.getAttribute('src')||el.getAttribute('data-src')||el.getAttribute('data-source');
             if(s&&!s.startsWith('blob:'))report(s,'dom_scan','GET');
-            // Check poster (sometimes contains useful URLs)
             if(el.getAttribute('poster'))report(el.getAttribute('poster'),'poster','GET');
         });
-        // Scan inline scripts for stream URLs
         var pats=[/["'](https?:\/\/[^"']+\.m3u8[^"']*?)["']/g,/["'](https?:\/\/[^"']+\.mp4[^"']*?)["']/g,/["'](https?:\/\/[^"']+\.mpd[^"']*?)["']/g,/["'](https?:\/\/[^"']+\.flv[^"']*?)["']/g,/["'](https?:\/\/[^"']+\.ts[^"']*?)["']/g,/file\s*:\s*["'](https?:\/\/[^"']+?)["']/g,/source\s*:\s*["'](https?:\/\/[^"']+?)["']/g,/hls\s*:\s*["'](https?:\/\/[^"']+?)["']/g,/src\s*:\s*["'](https?:\/\/[^"']+?(?:m3u8|mp4|mpd|flv)[^"']*?)["']/g,/url\s*:\s*["'](https?:\/\/[^"']+?(?:m3u8|mp4|mpd|flv)[^"']*?)["']/g,/playlist\s*:\s*["'](https?:\/\/[^"']+?)["']/g,/stream\s*:\s*["'](https?:\/\/[^"']+?)["']/g,/dash\s*:\s*["'](https?:\/\/[^"']+?)["']/g,/videoUrl\s*:\s*["'](https?:\/\/[^"']+?)["']/g,/playUrl\s*:\s*["'](https?:\/\/[^"']+?)["']/g,/downloadUrl\s*:\s*["'](https?:\/\/[^"']+?)["']/g];
         document.querySelectorAll('script:not([src])').forEach(function(s){var txt=s.textContent||'';pats.forEach(function(re){re.lastIndex=0;var m;while((m=re.exec(txt))!==null)report(m[1],'script_scan','GET');});});
-        // Scan object/embed tags
         document.querySelectorAll('object[data],embed[src]').forEach(function(el){var s=el.getAttribute('data')||el.getAttribute('src');if(s)report(s,'embed','GET');});
     },t);});
 
@@ -154,7 +232,6 @@ val HOOK_JS = """
                         var s = node.src || node.getAttribute('src') || node.getAttribute('data-src');
                         if (s) report(s, 'mutation', 'GET');
                     }
-                    // Check child video/source in added node
                     var videos = node.querySelectorAll ? node.querySelectorAll('video,source') : [];
                     videos.forEach(function(el) {
                         var s = el.src || el.getAttribute('src') || el.getAttribute('data-src');
@@ -191,7 +268,7 @@ class StreamDetector(private val context: Context? = null) {
         if (isNoise(url)) return
         val streamType = StreamItem.detectType(url)
         val req = NetworkRequest(url=url, method=method, headers=hdrs, pageUrl=pageUrl,
-                                 isStream=streamType!=null, streamType=streamType)
+                                 isStream=streamType!=null, streamType=streamType, source="network")
         addRequest(req)
         if (streamType != null)
             addStream(StreamItem(url=url, type=streamType, source="network", referer=pageUrl))
@@ -200,7 +277,41 @@ class StreamDetector(private val context: Context? = null) {
     fun reportFromJs(url: String, source: String, method: String, referer: String) {
         val streamType = StreamItem.detectType(url)
         val req = NetworkRequest(url=url, method=method, headers=emptyMap(), pageUrl=referer,
-                                 isStream=streamType!=null, streamType=streamType)
+                                 isStream=streamType!=null, streamType=streamType, source=source)
+        addRequest(req)
+        if (streamType != null)
+            addStream(StreamItem(url=url, type=streamType, source=source, referer=referer))
+    }
+
+    /** Called from JS hook with full response data */
+    fun reportWithResponse(url: String, source: String, method: String, referer: String,
+                           statusCode: Int, responseHeaders: String, bodyPreview: String,
+                           contentType: String, duration: Long) {
+        val streamType = StreamItem.detectType(url)
+        // Parse response headers string into map
+        val respHeadersMap = mutableMapOf<String, String>()
+        responseHeaders.split("\r\n").forEach { line ->
+            val idx = line.indexOf(':')
+            if (idx > 0) {
+                respHeadersMap[line.substring(0, idx).trim().lowercase()] = line.substring(idx + 1).trim()
+            }
+        }
+        // Also try newline-separated
+        if (respHeadersMap.isEmpty()) {
+            responseHeaders.split("\n").forEach { line ->
+                val idx = line.indexOf(':')
+                if (idx > 0) {
+                    respHeadersMap[line.substring(0, idx).trim().lowercase()] = line.substring(idx + 1).trim()
+                }
+            }
+        }
+        val req = NetworkRequest(
+            url=url, method=method, headers=emptyMap(), pageUrl=referer,
+            isStream=streamType!=null, streamType=streamType, source=source,
+            statusCode=statusCode, responseHeaders=respHeadersMap,
+            bodyPreview=bodyPreview.take(2000), contentType=contentType,
+            bodySize=bodyPreview.length.toLong(), duration=duration
+        )
         addRequest(req)
         if (streamType != null)
             addStream(StreamItem(url=url, type=streamType, source=source, referer=referer))
@@ -240,8 +351,6 @@ class StreamDetector(private val context: Context? = null) {
 
     fun clear() = synchronized(this) { _streams.clear(); _requests.clear() }
     fun softClear() = synchronized(this) {
-        // Keep streams but mark them from previous page
-        // Only clear requests to avoid memory bloat
         _requests.clear()
     }
     fun streamCount()  = synchronized(this) { _streams.size  }
