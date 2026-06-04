@@ -1,8 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- This app captures video streams from websites including HTTP ones.
-     Cleartext traffic is required for the core functionality of intercepting
-     HTTP video streams (m3u8/mp4). We keep it enabled but the app should
-     only be used on trusted networks. -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>

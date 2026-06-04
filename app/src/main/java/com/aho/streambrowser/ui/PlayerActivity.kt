@@ -1,9 +1,7 @@
 package com.aho.streambrowser.ui
 
-import android.os.Build
 import android.os.Bundle
 import android.view.View
-import android.view.WindowInsetsController
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.aho.streambrowser.databinding.ActivityPlayerBinding
@@ -26,13 +24,8 @@ class PlayerActivity : AppCompatActivity() {
         b = ActivityPlayerBinding.inflate(layoutInflater)
         setContentView(b.root)
 
-        // Fix: Use modern API for getting Parcelable extra
-        val stream = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            intent.getParcelableExtra(EXTRA_STREAM, StreamItem::class.java)
-        } else {
-            @Suppress("DEPRECATION")
-            intent.getParcelableExtra(EXTRA_STREAM)
-        }
+        @Suppress("DEPRECATION")
+        val stream = intent.getParcelableExtra<StreamItem>(EXTRA_STREAM)
         if (stream == null) { finish(); return }
 
         initPlayer(stream)
@@ -79,24 +72,14 @@ class PlayerActivity : AppCompatActivity() {
     override fun onStop()    { super.onStop();    player?.pause()   }
     override fun onDestroy() { player?.release(); player = null; super.onDestroy() }
 
-    // Fix: Use modern WindowInsetsController API instead of deprecated systemUiVisibility
+    @Suppress("DEPRECATION")
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                window.insetsController?.let { controller ->
-                    controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                    controller.hide(android.view.WindowInsets.Type.systemBars())
-                }
-            } else {
-                @Suppress("DEPRECATION")
-                window.decorView.systemUiVisibility = (
-                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION  or
-                    View.SYSTEM_UI_FLAG_FULLSCREEN
-                )
-            }
-        }
+        if (hasFocus) window.decorView.systemUiVisibility = (
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION  or
+            View.SYSTEM_UI_FLAG_FULLSCREEN
+        )
     }
 
     companion object {

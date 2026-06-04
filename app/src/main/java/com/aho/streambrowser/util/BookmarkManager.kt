@@ -40,18 +40,13 @@ object BookmarkManager {
     fun addHistory(ctx: Context, url: String, title: String) {
         if (url.startsWith("about:") || url.startsWith("data:")) return
         val list = getHistory(ctx).toMutableList()
-        list.removeAll { it.url == url }          // remove old entry with same URL
+        list.removeAll { it.url == url }          // bỏ entry cũ cùng URL
         list.add(0, BookmarkEntry(url, title, false))
         if (list.size > MAX_HISTORY) list.subList(MAX_HISTORY, list.size).clear()
         save(ctx, KEY_HI, list)
     }
 
     fun clearHistory(ctx: Context) = save(ctx, KEY_HI, emptyList())
-
-    // Fix: Add single history entry deletion
-    fun removeHistoryEntry(ctx: Context, url: String) {
-        save(ctx, KEY_HI, getHistory(ctx).filter { it.url != url })
-    }
 
     fun getHistory(ctx: Context): List<BookmarkEntry> = load(ctx, KEY_HI)
 

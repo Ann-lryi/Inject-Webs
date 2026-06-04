@@ -3,7 +3,6 @@ package com.aho.streambrowser.ui
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
@@ -28,7 +27,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var b: ActivityMainBinding
     val detector by lazy { StreamDetector(this) }
-    val blocker by lazy { RequestBlocker(this) }
+    private val blocker by lazy { RequestBlocker(this) }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,7 +49,6 @@ class MainActivity : AppCompatActivity() {
             domStorageEnabled                = true
             databaseEnabled                  = true
             allowFileAccess                  = false
-            // Allow mixed content so HTTP video streams can load on HTTPS pages
             mixedContentMode                 = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             mediaPlaybackRequiresUserGesture = false
             userAgentString                  = ua
@@ -85,7 +83,8 @@ class MainActivity : AppCompatActivity() {
                      event?.keyCode == KeyEvent.KEYCODE_ENTER
             if (go) { navigateTo(b.etUrl.text.toString()); true } else false
         }
-        b.etUrl.setOnLongClickListener { showBookmarkHistory(); true }
+        // Do NOT set onLongClickListener on URL bar - allow default text selection (copy/paste/select all)
+        // Bookmark button long-press still opens bookmark/history
     }
 
     private fun setupButtons() {
@@ -122,14 +121,14 @@ class MainActivity : AppCompatActivity() {
                         android.content.res.ColorStateList.valueOf(
                             android.graphics.Color.parseColor("#E24B4A"))
                     Toast.makeText(this,
-                        "Tap vào bất kỳ element nào trên trang", Toast.LENGTH_LONG).show()
+                        "✏ Tap vào bất kỳ element nào trên trang", Toast.LENGTH_LONG).show()
                 },
                 onDeactivated = { hidePicker() }
             )
         }
     }
 
-    /** Called from DevToolsSheet when picker is activated */
+    /** Gọi từ DevToolsSheet khi bật picker */
     fun activatePicker() {
         b.btnPickerFloat.isVisible = true
         ElementPickerManager.activate(
@@ -139,7 +138,7 @@ class MainActivity : AppCompatActivity() {
                     android.content.res.ColorStateList.valueOf(
                         android.graphics.Color.parseColor("#E24B4A"))
                 Toast.makeText(this,
-                    "Tap vào element bất kỳ trên trang", Toast.LENGTH_LONG).show()
+                    "✏ Tap vào element bất kỳ trên trang", Toast.LENGTH_LONG).show()
             },
             onDeactivated = { runOnUiThread { hidePicker() } }
         )
@@ -182,7 +181,7 @@ class MainActivity : AppCompatActivity() {
         )
         b.btnDevTools.text = "DevTools"
         b.btnDevTools.shrink()
-        // Reset picker when navigating to new page
+        // Reset picker khi navigate trang mới
         if (ElementPickerManager.isPickerActive()) hidePicker()
     }
 
@@ -212,7 +211,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openDevTools() {
-        DevToolsSheet(detector, blocker, b.webView, this) { playStream(it) }
+        DevToolsSheet(detector, b.webView, this) { playStream(it) }
             .show(supportFragmentManager, DevToolsSheet.TAG)
     }
 
@@ -237,19 +236,10 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    // Fix: Use OnBackPressedDispatcher instead of deprecated onBackPressed()
     override fun onBackPressed() {
         if (b.webView.canGoBack()) b.webView.goBack() else super.onBackPressed()
     }
-
     override fun onPause()   { super.onPause();   b.webView.onPause()  }
     override fun onResume()  { super.onResume();  b.webView.onResume() }
-
-    // Fix: WebView.destroy() must be called after removing from parent to avoid crash
-    override fun onDestroy() {
-        b.webView.stopLoading()
-        (b.webView.parent as? android.view.ViewGroup)?.removeView(b.webView)
-        b.webView.destroy()
-        super.onDestroy()
-    }
+    override fun onDestroy() { b.webView.destroy(); super.onDestroy()  }
 }

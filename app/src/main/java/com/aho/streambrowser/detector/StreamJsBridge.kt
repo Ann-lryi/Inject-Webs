@@ -16,16 +16,4 @@ class StreamJsBridge(
     fun onStreamFound(url: String, source: String) {
         detector.reportFromJs(url, source, "GET", getCurrentUrl())
     }
-
-    /** Called from JS hooks when XHR/Fetch response is captured */
-    @JavascriptInterface
-    fun onResponse(url: String, statusCode: Int, headersJson: String, bodyPreview: String) {
-        detector.updateResponseFromJs(url, statusCode, headersJson, bodyPreview)
-    }
-
-    /** Called from JS hooks when POST body is captured */
-    @JavascriptInterface
-    fun onRequestBody(url: String, body: String) {
-        detector.updateRequestBodyFromJs(url, body)
-    }
 }

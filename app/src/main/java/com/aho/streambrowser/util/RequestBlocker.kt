@@ -7,7 +7,7 @@ class RequestBlocker(context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("stream_browser_data", Context.MODE_PRIVATE)
 
-    // Built-in ad/tracker patterns
+    // Built-in patterns luôn bật (ads/tracker phổ biến)
     private val builtinPatterns = listOf(
         "doubleclick.net", "googlesyndication.com", "googletagmanager.com",
         "google-analytics.com", "facebook.com/tr", "connect.facebook.net",
@@ -16,16 +16,10 @@ class RequestBlocker(context: Context) {
         "amazon-adsystem.com", "advertising.com", "adsrvr.org", "moatads.com"
     )
 
-    // Fix: Cache custom patterns to avoid reading SharedPreferences on every request
-    @Volatile
-    private var cachedCustomPatterns: List<String>? = null
-
+    // Custom patterns do user thêm
     fun getCustomPatterns(): List<String> {
-        cachedCustomPatterns?.let { return it }
         val raw = prefs.getString("block_patterns", "") ?: ""
-        val patterns = raw.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-        cachedCustomPatterns = patterns
-        return patterns
+        return raw.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
     }
 
     fun addPattern(pattern: String) {
@@ -34,13 +28,11 @@ class RequestBlocker(context: Context) {
             list.add(0, pattern)
             prefs.edit().putString("block_patterns", list.joinToString("\n")).apply()
         }
-        cachedCustomPatterns = null // Invalidate cache
     }
 
     fun removePattern(pattern: String) {
         val list = getCustomPatterns().filter { it != pattern }
         prefs.edit().putString("block_patterns", list.joinToString("\n")).apply()
-        cachedCustomPatterns = null // Invalidate cache
     }
 
     fun isBuiltinEnabled(): Boolean = prefs.getBoolean("builtin_block", true)
