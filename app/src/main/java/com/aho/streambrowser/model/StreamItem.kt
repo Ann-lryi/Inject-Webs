@@ -30,15 +30,21 @@ data class StreamItem(
 
         fun detectType(url: String): StreamType? {
             val l = url.lowercase()
+            // Query string / fragment should not influence extension-based detection
+            val path = l.substringBefore("?").substringBefore("#")
             return when {
-                l.contains(".m3u8") || l.contains("/hls/") || l.contains("manifest/")  -> StreamType.HLS
-                l.contains(".mp4")                                                       -> StreamType.MP4
-                l.contains(".mpd")                                                       -> StreamType.DASH
-                l.contains(".flv")                                                       -> StreamType.FLV
-                // Heuristic cho CDN stream không có extension rõ
-                l.contains("stream") && l.contains("token") && l.startsWith("http")     -> StreamType.HLS
-                l.contains("/video/") && (l.contains("cdn") || l.contains("media"))
-                    && l.startsWith("http")                                              -> StreamType.MP4
+                path.endsWith(".m3u8") || path.endsWith(".m3u") && !l.contains(".mp3") -> StreamType.HLS
+                path.endsWith(".mp4")  || path.endsWith(".m4v")                       -> StreamType.MP4
+                path.endsWith(".mpd")                                                    -> StreamType.DASH
+                path.endsWith(".flv")                                                    -> StreamType.FLV
+                // .ts segment – only if in a clear HLS context
+                path.endsWith(".ts") && !l.contains("typescript")
+                    && (l.contains("m3u8") || l.contains("/hls/") || l.contains("segment")) -> StreamType.HLS
+                // Heuristic cho CDN stream không có extension rõ – stricter matching
+                l.contains(".m3u8")                                                      -> StreamType.HLS
+                l.contains("/hls/") && l.startsWith("http")                              -> StreamType.HLS
+                l.contains("manifest/") && l.startsWith("http") && l.contains("m3u8")     -> StreamType.HLS
+                l.contains("/dash/") && l.startsWith("http") && l.contains(".mpd")        -> StreamType.DASH
                 else                                                                     -> null
             }
         }

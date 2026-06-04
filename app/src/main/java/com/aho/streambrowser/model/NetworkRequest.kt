@@ -1,15 +1,21 @@
 package com.aho.streambrowser.model
 
+import java.util.concurrent.atomic.AtomicLong
+
 data class NetworkRequest(
-    val id: Long = System.currentTimeMillis(),
+    val id: Long = COUNTER.incrementAndGet(),
     val url: String,
     val method: String,
     val headers: Map<String, String>,
     val pageUrl: String,
     val isStream: Boolean,
     val streamType: StreamType? = null,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val bodyPreview: String = ""
 ) {
+    companion object {
+        private val COUNTER = AtomicLong(0)
+    }
     val host: String get() = runCatching { java.net.URL(url).host }.getOrElse { "" }
     val path: String get() = runCatching { java.net.URL(url).path }.getOrElse { url }
     val tag: String get() = when {

@@ -1,9 +1,12 @@
 package com.aho.streambrowser.ui
 
+import android.app.AlertDialog
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.os.BundleCompat
 import com.aho.streambrowser.databinding.ActivityPlayerBinding
 import com.aho.streambrowser.model.StreamItem
 import com.aho.streambrowser.model.StreamType
@@ -24,8 +27,13 @@ class PlayerActivity : AppCompatActivity() {
         b = ActivityPlayerBinding.inflate(layoutInflater)
         setContentView(b.root)
 
-        @Suppress("DEPRECATION")
-        val stream = intent.getParcelableExtra<StreamItem>(EXTRA_STREAM)
+        // Use BundleCompat for API 33+ compatibility
+        val stream = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(EXTRA_STREAM, StreamItem::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(EXTRA_STREAM)
+        }
         if (stream == null) { finish(); return }
 
         initPlayer(stream)
@@ -62,8 +70,20 @@ class PlayerActivity : AppCompatActivity() {
                 exo.playWhenReady = true
                 exo.addListener(object : Player.Listener {
                     override fun onPlayerError(error: PlaybackException) {
-                        Toast.makeText(this@PlayerActivity,
-                            "Lỗi: ${error.message}", Toast.LENGTH_LONG).show()
+                        runOnUiThread {
+                            Toast.makeText(this@PlayerActivity,
+                                "Lỗi phát: ${error.message}", Toast.LENGTH_LONG).show()
+                            // Show retry option
+                            AlertDialog.Builder(this@PlayerActivity)
+                                .setTitle("Lỗi phát video")
+                                .setMessage("Không thể phát luồng này.\n${error.message}")
+                                .setPositiveButton("Thử lại") { _, _ ->
+                                    exo.seekToDefaultPosition()
+                                    exo.prepare()
+                                }
+                                .setNegativeButton("Đóng") { _, _ -> finish() }
+                                .show()
+                        }
                     }
                 })
             }
@@ -72,14 +92,26 @@ class PlayerActivity : AppCompatActivity() {
     override fun onStop()    { super.onStop();    player?.pause()   }
     override fun onDestroy() { player?.release(); player = null; super.onDestroy() }
 
-    @Suppress("DEPRECATION")
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) window.decorView.systemUiVisibility = (
-            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION  or
-            View.SYSTEM_UI_FLAG_FULLSCREEN
-        )
+        if (hasFocus) hideSystemUI()
+    }
+
+    private fun hideSystemUI() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false)
+            window.insetsController?.let {
+                it.systemBarsBehavior = android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                it.hide(android.view.WindowInsets.Type.systemBars())
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION  or
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+            )
+        }
     }
 
     companion object {

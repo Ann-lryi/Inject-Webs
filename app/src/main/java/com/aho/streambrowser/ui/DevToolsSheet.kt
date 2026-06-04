@@ -23,6 +23,7 @@ import kotlinx.coroutines.*
 
 class DevToolsSheet(
     private val detector: StreamDetector,
+    private val blocker: RequestBlocker,
     private val webView: WebView,
     private val activity: MainActivity,
     private val onPlayStream: (StreamItem) -> Unit
@@ -65,10 +66,17 @@ class DevToolsSheet(
 
         val btnClearAll = btn(ctx, "🗑", "#E24B4A").apply {
             setOnClickListener {
-                detector.clear()
-                refreshTabs()
-                contentFrame.removeAllViews()
-                showTab(currentTab)
+                AlertDialog.Builder(ctx)
+                    .setTitle("Xoá tất cả?")
+                    .setMessage("Xoá tất cả dữ liệu streams và requests?")
+                    .setPositiveButton("Có") { _, _ ->
+                        detector.clear()
+                        refreshTabs()
+                        contentFrame.removeAllViews()
+                        showTab(currentTab)
+                    }
+                    .setNegativeButton("Không", null)
+                    .show()
             }
         }
         tabRow.addView(tabLayout)
@@ -189,16 +197,21 @@ class DevToolsSheet(
         container.addView(scroll)
         val presets = listOf(
             "Hook XHR"        to "(function(){var _s=XMLHttpRequest.prototype.send;window.__xhr_log=window.__xhr_log||[];XMLHttpRequest.prototype.send=function(b){this.addEventListener('load',function(){var u=this.responseURL||'';if(u)window.__xhr_log.push({url:u,status:this.status,len:this.responseText.length});try{SBridge.onRequest(u,'xhr_hook','GET');}catch(e){}});return _s.apply(this,arguments);};return 'XHR hooked.';})();",
-            "Dump XHR"        to "(function(){if(!window.__xhr_log||!window.__xhr_log.length)return 'No log.';return window.__xhr_log.slice(-8).map(function(x){return x.status+' '+x.url;}).join('\\n');})()",
+            "Dump XHR"        to "(function(){if(!window.__xhr_log||!window.__xhr_log.length)return 'No log.';return window.__xhr_log.slice(-20).map(function(x){return x.status+' '+x.url;}).join('\\n');})()",
             "Hook Fetch"      to "(function(){if(window.__fetch_hooked)return 'Already hooked';window.__fetch_hooked=true;var _f=window.fetch;window.__fetch_log=[];window.fetch=function(i,o){var u=typeof i==='string'?i:(i&&i.url)||'';return _f.apply(this,arguments).then(function(r){var url=r.url||u;window.__fetch_log.push({url:url,status:r.status});try{SBridge.onRequest(url,'fetch_hook','GET');}catch(e){}return r;});};return 'Fetch hooked.';})();",
-            "Dump Fetch"      to "(function(){if(!window.__fetch_log||!window.__fetch_log.length)return 'No log.';return window.__fetch_log.slice(-8).map(function(x){return x.status+' '+x.url;}).join('\\n');})()",
+            "Dump Fetch"      to "(function(){if(!window.__fetch_log||!window.__fetch_log.length)return 'No log.';return window.__fetch_log.slice(-20).map(function(x){return x.status+' '+x.url;}).join('\\n');})()",
             "Hook HLS.js"     to "(function(){if(!window.Hls)return 'No Hls.js';if(window.__hls_hooked)return 'Already hooked';window.__hls_hooked=true;var o=Hls.prototype.loadSource;Hls.prototype.loadSource=function(url){try{SBridge.onRequest(url,'hlsjs','GET');}catch(e){}return o.apply(this,arguments);};return 'HLS.js hooked!';})();",
             "Hook MSE"        to "(function(){if(window.__ms_hooked)return 'Already hooked';window.__ms_hooked=true;var o=MediaSource.prototype.addSourceBuffer;MediaSource.prototype.addSourceBuffer=function(mime){try{SBridge.onRequest('mse://'+encodeURIComponent(mime),'mse','GET');}catch(e){}return o.apply(this,arguments);};return 'MSE hooked.';})();",
-            "Quét players"    to "(function(){var keys=['player','_player','videojs','jwplayer','hls','Hls','dash','shaka','flvjs','clappr','bitmovin','ZP'];var found=[];keys.forEach(function(k){if(window[k]!=null)found.push(k+':'+typeof window[k]);});return found.length?found.join('\\n'):'none';})()",
-            "Tìm keys/tokens" to "(function(){var txt=document.documentElement.innerHTML.slice(0,200000);var out=[];var pats=[['key',/[\"']key[\"']\\s*:\\s*[\"']([^\"']{6,80})[\"']/gi],['token',/[\"']token[\"']\\s*:\\s*[\"']([^\"']{6,200})[\"']/gi],['secret',/[\"']secret[\"']\\s*:\\s*[\"']([^\"']{6,80})[\"']/gi]];pats.forEach(function(p){var m;p[1].lastIndex=0;while((m=p[1].exec(txt))!==null&&out.length<12)out.push(p[0]+': '+m[1]);});return out.length?out.join('\\n'):'none';})()",
-            "Base64 decode"   to "(function(){var html=document.documentElement.innerHTML;var ms=html.match(/[\"']([A-Za-z0-9+\\/]{40,}={0,2})[\"']/g)||[];var out=[];ms.slice(0,30).forEach(function(m){try{var d=atob(m.replace(/[\"']/g,''));if(d.indexOf('http')!==-1||d.indexOf('m3u8')!==-1)out.push(d.slice(0,200));}catch(e){}});return out.length?out.join('\\n'):'none';})()",
+            "Hook videojs"    to "(function(){if(!window.videojs)return 'No videojs';if(window.__vjs_hooked)return 'Already hooked';window.__vjs_hooked=true;var _orig=window.videojs;window.videojs=function(el,opts,ready){try{if(opts&&opts.sources)opts.sources.forEach(function(s){if(s&&s.src)try{SBridge.onRequest(s.src,'videojs_hook','GET');}catch(e){}});if(opts&&opts.src)try{SBridge.onRequest(opts.src,'videojs_hook','GET');}catch(e){}}catch(e){}return _orig.apply(this,arguments);};Object.assign(window.videojs,_orig);return 'video.js hooked!';})();",
+            "Hook play()"     to "(function(){if(window.__play_hooked)return 'Already hooked';window.__play_hooked=true;var _p=HTMLVideoElement.prototype.play;HTMLVideoElement.prototype.play=function(){try{var s=this.src||this.currentSrc||(this.querySelector&&this.querySelector('source')?this.querySelector('source').src:'');if(s)try{SBridge.onRequest(s,'play_hook','GET');}catch(e){}}catch(e){}return _p.apply(this,arguments);};return 'play() hooked!';})();",
+            "All video src"   to "(function(){var v=[].slice.call(document.querySelectorAll('video'));var out=[];v.forEach(function(el,i){out.push('Video'+i+': src='+el.src+' currentSrc='+el.currentSrc);if(el.textTracks)out.push('  tracks='+el.textTracks.length);});return out.length?out.join('\\n'):'no video elements';})()",
+            "Quét players"    to "(function(){var keys=['player','_player','videojs','jwplayer','hls','Hls','dash','shaka','flvjs','clappr','bitmovin','ZP','Plyr','DPlayer','xgplayer','tcplayer','Aliplayer','Artplayer'];var found=[];keys.forEach(function(k){if(window[k]!=null)found.push(k+':'+typeof window[k]);});return found.length?found.join('\\n'):'none';})()",
+            "Tìm keys/tokens" to "(function(){var txt=document.documentElement.innerHTML.slice(0,200000);var out=[];var pats=[['key',/[\"']key[\"']\\s*:\\s*[\"']([^\"']{6,80})[\"']/gi],['token',/[\"']token[\"']\\s*:\\s*[\"']([^\"']{6,200})[\"']/gi],['secret',/[\"']secret[\"']\\s*:\\s*[\"']([^\"']{6,80})[\"']/gi],['apiKey',/[\"']apiKey[\"']\\s*:\\s*[\"']([^\"']{6,80})[\"']/gi],['api_key',/[\"']api_key[\"']\\s*:\\s*[\"']([^\"']{6,80})[\"']/gi]];pats.forEach(function(p){var m;p[1].lastIndex=0;while((m=p[1].exec(txt))!==null&&out.length<12)out.push(p[0]+': '+m[1]);});return out.length?out.join('\\n'):'none';})()",
+            "Base64 decode"   to "(function(){var html=document.documentElement.innerHTML;var ms=html.match(/[\"']([A-Za-z0-9+\\/]{40,}={0,2})[\"']/g)||[];var out=[];ms.slice(0,50).forEach(function(m){try{var d=atob(m.replace(/[\"']/g,''));if(d.indexOf('http')!==-1||d.indexOf('m3u8')!==-1||d.indexOf('.mp4')!==-1)out.push(d.slice(0,300));}catch(e){}});return out.length?out.join('\\n'):'none';})()",
             "Cookie+Storage"  to "(function(){var r={cookies:document.cookie};try{r.local=[].concat(Object.keys(localStorage)).map(function(k){return k+'='+localStorage.getItem(k)}).join('; ');}catch(e){r.local='blocked';}try{r.session=[].concat(Object.keys(sessionStorage)).map(function(k){return k+'='+sessionStorage.getItem(k)}).join('; ');}catch(e){r.session='blocked';}return JSON.stringify(r,null,2);})()",
             "Tất cả iframes"  to "(function(){var f=[].slice.call(document.querySelectorAll('iframe'));return f.length?f.map(function(el,i){return i+': '+(el.src||el.getAttribute('src')||'no-src');}).join('\\n'):'none';})()",
+            "Deep scan"       to "(function(){var html=document.documentElement.innerHTML;var out=[];var pats=[/https?:\\/\\/[^\\s\"'<>]+\\.m3u8[^\\s\"'<>]*/gi,/https?:\\/\\/[^\\s\"'<>]+\\.mp4[^\\s\"'<>]*/gi,/https?:\\/\\/[^\\s\"'<>]+\\.mpd[^\\s\"'<>]*/gi,/https?:\\/\\/[^\\s\"'<>]+\\.flv[^\\s\"'<>]*/gi,/https?:\\/\\/[^\\s\"'<>]*(?:cdn|stream|media|video|vod)[^\\s\"'<>]*/gi];pats.forEach(function(re){re.lastIndex=0;var m;while((m=re.exec(html))!==null&&out.length<30){if(out.indexOf(m[0])===-1)out.push(m[0]);}});return out.length?out.join('\\n'):'nothing found';})()",
+            "Network filter"  to "(function(){var filter=prompt('Enter filter keyword:','m3u8');if(!filter)return 'cancelled';var results=[];if(window.__xhr_log)window.__xhr_log.forEach(function(x){if(x.url.indexOf(filter)!==-1)results.push('XHR '+x.status+' '+x.url);});if(window.__fetch_log)window.__fetch_log.forEach(function(x){if(x.url.indexOf(filter)!==-1)results.push('Fetch '+x.status+' '+x.url);});return results.length?results.join('\\n'):'no match for '+filter;})()",
         )
         addPresets(ctx, container, presets, tv, scroll, detector.deepLog)
         container.addView(divider(ctx))
@@ -354,16 +367,19 @@ class DevToolsSheet(
                 if (q.isEmpty() || currentHtml.isEmpty()) {
                     outputTv.text = currentHtml; tvMatch.text = ""; return
                 }
-                val count = currentHtml.split(q, ignoreCase = true).size - 1
+                // Use regex for counting instead of split() for better performance
+                val regex = Regex(Regex.escape(q), RegexOption.IGNORE_CASE)
+                val count = regex.findAll(currentHtml).count()
                 tvMatch.text = "$count kết quả"
                 val span = android.text.SpannableString(currentHtml)
-                var idx = currentHtml.indexOf(q, ignoreCase = true); var n = 0
-                while (idx >= 0 && n < 200) {
+                var n = 0
+                regex.findAll(currentHtml).forEach { match ->
+                    if (n >= 200) return@forEach
                     span.setSpan(android.text.style.BackgroundColorSpan(Color.parseColor("#FFD700")),
-                        idx, idx + q.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        match.range.first, match.range.last + 1, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     span.setSpan(android.text.style.ForegroundColorSpan(Color.BLACK),
-                        idx, idx + q.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    idx = currentHtml.indexOf(q, idx + 1, ignoreCase = true); n++
+                        match.range.first, match.range.last + 1, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    n++
                 }
                 outputTv.text = span
             }
@@ -447,7 +463,7 @@ class DevToolsSheet(
     // ── 6. Blocker ───────────────────────────────────────────────────────────
     private fun showBlockerTab() {
         val ctx = requireContext()
-        val blocker = com.aho.streambrowser.util.RequestBlocker(ctx)
+        // Use blocker passed from MainActivity
         val container = col(ctx)
         container.addView(ScrollView(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
@@ -626,7 +642,7 @@ class DevToolsSheet(
                 vh.root.setOnClickListener { activity.navigateTo(e.url); dismiss() }
                 vh.btnDel.setOnClickListener {
                     if (e.isBookmark) BookmarkManager.removeBookmark(ctx, e.url)
-                    else BookmarkManager.clearHistory(ctx)
+                    else BookmarkManager.removeHistory(ctx, e.url)
                     contentFrame.removeAllViews(); showSavedTab()
                 }
             }
@@ -705,6 +721,14 @@ class DevToolsSheet(
                 jsInput.setText(h[histIdx]); jsInput.setSelection(jsInput.text.length)
             }
         }
+        val btnDown = btn(ctx, "↓", "#888888").apply {
+            setOnClickListener {
+                val h = detector.consoleHistory
+                if (h.isEmpty()) return@setOnClickListener
+                histIdx = (histIdx+1).coerceAtMost(h.size - 1)
+                jsInput.setText(h[histIdx]); jsInput.setSelection(jsInput.text.length)
+            }
+        }
         val btnRun = btn(ctx, "▶", "#1D9E75", "#FFFFFF").apply {
             setOnClickListener {
                 val code = jsInput.text.toString().trim(); if (code.isEmpty()) return@setOnClickListener
@@ -720,7 +744,7 @@ class DevToolsSheet(
                 outputTv.text = log
             }
         }
-        listOf(prefix, jsInput, btnUp, btnRun, btnClear).forEach { inputRow.addView(it) }
+        listOf(prefix, jsInput, btnUp, btnDown, btnRun, btnClear).forEach { inputRow.addView(it) }
         container.addView(inputRow)
     }
 

@@ -88,6 +88,7 @@ object ElementPickerManager {
 
         // Đăng ký bridge (safe nếu đã đăng ký)
         try {
+            webView.removeJavascriptInterface("SBridge_picker")
             webView.addJavascriptInterface(
                 PickerBridge(webView.context, onDeactivated),
                 "SBridge_picker"

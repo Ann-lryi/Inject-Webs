@@ -22,6 +22,7 @@ object M3u8Parser {
      * Fetch và parse master playlist.
      * Trả về list quality streams, hoặc list chứa 1 entry nếu là media playlist.
      */
+    @androidx.annotation.WorkerThread
     fun parse(url: String, referer: String = ""): List<M3u8Quality> {
         val req = Request.Builder()
             .url(url)
@@ -29,7 +30,11 @@ object M3u8Parser {
             .apply { if (referer.isNotBlank()) header("Referer", referer) }
             .build()
 
-        val body = client.newCall(req).execute().use { it.body?.string() ?: "" }
+        val body = try {
+            client.newCall(req).execute().use { response ->
+                if (response.isSuccessful) response.body?.string() ?: "" else ""
+            }
+        } catch (e: Exception) { "" }
 
         // Master playlist có #EXT-X-STREAM-INF
         return if (body.contains("#EXT-X-STREAM-INF")) {
@@ -54,9 +59,14 @@ object M3u8Parser {
                 if (nextLine.isNotEmpty() && !nextLine.startsWith("#")) {
                     val streamUrl = if (nextLine.startsWith("http")) nextLine
                                     else resolveUrl(baseUrl, nextLine)
+                    val codecs = attrs["CODECS"] ?: ""
                     val kbps  = bandwidth / 1000
-                    val label = if (resolution.isNotEmpty()) "$resolution (${kbps}k)"
-                                else "${kbps}k"
+                    val label = when {
+                        resolution.isNotEmpty() && codecs.isNotEmpty() -> "$resolution ${kbps}k ($codecs)"
+                        resolution.isNotEmpty() -> "$resolution (${kbps}k)"
+                        codecs.isNotEmpty() -> "${kbps}k ($codecs)"
+                        else -> "${kbps}k"
+                    }
                     results.add(M3u8Quality(bandwidth, resolution, streamUrl, label))
                     i++
                 }
@@ -68,7 +78,7 @@ object M3u8Parser {
 
     private fun parseAttrs(line: String): Map<String, String> {
         val map = mutableMapOf<String, String>()
-        val regex = Regex("""(\w+(?:-\w+)*)=(?:"([^"]*)"|([\w@\-./]+))""")
+        val regex = Regex("""(\w+(?:-\w+)*)=(?:"([^"]*)"|([\w@\-./,:]+))""")
         regex.findAll(line).forEach { m ->
             map[m.groupValues[1]] = m.groupValues[2].ifBlank { m.groupValues[3] }
         }
