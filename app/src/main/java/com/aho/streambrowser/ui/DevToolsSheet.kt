@@ -13,6 +13,7 @@ import android.view.*
 import android.webkit.WebView
 import android.widget.*
 import androidx.recyclerview.widget.*
+import com.aho.streambrowser.detector.BoundedStringBuilder
 import com.aho.streambrowser.detector.StreamDetector
 import com.aho.streambrowser.model.NetworkRequest
 import com.aho.streambrowser.model.StreamItem
@@ -689,7 +690,7 @@ class DevToolsSheet(
 
     // ── Shared helpers ────────────────────────────────────────────────────────
     private fun addPresets(ctx: Context, container: LinearLayout, presets: List<Pair<String,String>>,
-                           tv: TextView, scroll: ScrollView, log: StringBuilder) {
+                           tv: TextView, scroll: ScrollView, log: BoundedStringBuilder) {
         val hs = HorizontalScrollView(ctx).apply { isHorizontalScrollBarEnabled=false; layoutParams=LinearLayout.LayoutParams(MATCH,WRAP) }
         val row2 = row(ctx).apply { setPadding(8.dp,4.dp,8.dp,4.dp) }
         presets.forEach { (label, code) ->
@@ -706,7 +707,7 @@ class DevToolsSheet(
     }
 
     private fun addInputRow(ctx: Context, container: LinearLayout, outputTv: TextView,
-                            scroll: ScrollView, log: StringBuilder, isDeep: Boolean) {
+                            scroll: ScrollView, log: BoundedStringBuilder, isDeep: Boolean) {
         val inputRow = row(ctx, "#141414").apply { setPadding(8.dp,6.dp,8.dp,6.dp) }
         val prefix = tv(ctx, "JS>", "#1D9E75", 12f).apply {
             typeface=android.graphics.Typeface.MONOSPACE; setPadding(0,0,8.dp,0)
@@ -748,7 +749,7 @@ class DevToolsSheet(
         container.addView(inputRow)
     }
 
-    private fun runJs(code: String, output: TextView, scroll: ScrollView, log: StringBuilder, label: String) {
+    private fun runJs(code: String, output: TextView, scroll: ScrollView, log: BoundedStringBuilder, label: String) {
         log.append("\n▶ $label\n"); output.text = log
         webView.evaluateJavascript(code) { result ->
             requireActivity().runOnUiThread {
@@ -764,7 +765,7 @@ class DevToolsSheet(
         }
     }
 
-    private fun outputArea(ctx: Context, log: StringBuilder, color: String): Pair<ScrollView, TextView> {
+    private fun outputArea(ctx: Context, log: BoundedStringBuilder, color: String): Pair<ScrollView, TextView> {
         val tv2 = TextView(ctx).apply {
             text=log; setTextColor(Color.parseColor(color))
             textSize=11f; typeface=android.graphics.Typeface.MONOSPACE
