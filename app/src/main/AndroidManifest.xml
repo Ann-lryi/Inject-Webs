@@ -17,7 +17,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.StreamBrowser"
         android:networkSecurityConfig="@xml/network_security_config"
-        android:usesCleartextTraffic="false"
+        android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true">
 
         <activity

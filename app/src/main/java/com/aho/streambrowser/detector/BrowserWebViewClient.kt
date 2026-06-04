@@ -1,10 +1,12 @@
 package com.aho.streambrowser.detector
 
 import android.graphics.Bitmap
-import android.net.http.SslError
 import android.webkit.*
 import com.aho.streambrowser.util.RequestBlocker
-import com.aho.streambrowser.util.UserAgentManager
+import kotlinx.coroutines.*
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 class BrowserWebViewClient(
     private val detector: StreamDetector,
@@ -14,29 +16,108 @@ class BrowserWebViewClient(
 ) : WebViewClient() {
 
     private var currentUrl = ""
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .build()
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
         currentUrl = url
-        detector.softClear()
-        // Inject stream detection hooks first
+        // Fix: Only clear network data, keep persistent logs
+        detector.clearNetworkData()
         view.evaluateJavascript(HOOK_JS, null)
-        // Then inject UA override to ensure it's active from the start
-        injectUaEarly(view)
         onPageStarted(url, favicon)
     }
 
     override fun onPageFinished(view: WebView, url: String) {
+        view.evaluateJavascript(HOOK_JS, null)
         onPageFinished(url)
     }
 
     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
         val url = request.url.toString()
+        // Block ads/trackers
         if (blocker.shouldBlock(url)) {
             blocker.incrementBlocked()
             return WebResourceResponse("text/plain", "utf-8", null)
         }
         detector.interceptRequest(request, currentUrl)
+
+        // Fetch response data asynchronously for non-binary, non-stream requests
+        fetchResponseDataAsync(url, request.requestHeaders)
+
         return null
+    }
+
+    /** Make a background OkHttp request to capture response status, headers, and body preview */
+    private fun fetchResponseDataAsync(url: String, requestHeaders: Map<String, String>?) {
+        // Skip stream URLs (too large, already handled by player)
+        val streamType = com.aho.streambrowser.model.StreamItem.detectType(url)
+        if (streamType != null) return
+
+        // Skip binary resources that we don't need response data for
+        val l = url.lowercase()
+        if (l.contains(".png") || l.contains(".jpg") || l.contains(".jpeg") ||
+            l.contains(".gif") || l.contains(".webp") || l.contains(".avif") ||
+            l.contains(".woff") || l.contains(".woff2") || l.contains(".ttf") ||
+            l.contains(".eot") || l.contains(".ico") || l.contains(".svg") ||
+            l.contains(".css")) return
+
+        scope.launch {
+            try {
+                val reqBuilder = Request.Builder().url(url)
+                // Forward relevant headers from the original request
+                requestHeaders?.forEach { (k, v) ->
+                    when (k.lowercase()) {
+                        "cookie", "referer", "origin", "authorization", "accept", "accept-language",
+                        "accept-encoding", "x-requested-with", "sec-ch-ua", "sec-ch-ua-mobile",
+                        "sec-ch-ua-platform", "sec-fetch-dest", "sec-fetch-mode", "sec-fetch-site" ->
+                            reqBuilder.header(k, v)
+                    }
+                }
+                val response = client.newCall(reqBuilder.build()).execute()
+                val statusCode = response.code
+                val statusText = response.message
+
+                // Capture response headers
+                val respHeaders = mutableMapOf<String, String>()
+                response.headers.forEach { (k, v) -> respHeaders[k.lowercase()] = v }
+
+                val mimeType = response.header("content-type", "") ?: ""
+                val contentLength = response.header("content-length", "-1")?.toLongOrNull() ?: -1L
+
+                // Capture body preview for text-based responses (up to 10KB)
+                var bodyPreview = ""
+                val isTextLike = mimeType.contains("text") || mimeType.contains("json") ||
+                        mimeType.contains("xml") || mimeType.contains("javascript") ||
+                        mimeType.contains("html") || mimeType.contains("form") ||
+                        url.contains(".json") || url.contains(".xml") ||
+                        url.contains(".m3u8") || url.contains(".mpd")
+
+                if (isTextLike) {
+                    try {
+                        val body = response.body
+                        if (body != null) {
+                            val source = body.source()
+                            source.request(10240L)
+                            val bytes = source.readByteArray()
+                            bodyPreview = String(bytes, Charsets.UTF_8)
+                            body.close()
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                response.close()
+
+                detector.updateResponseData(url, statusCode, statusText, respHeaders,
+                    bodyPreview, mimeType, contentLength)
+            } catch (_: Exception) {
+                // Silently fail - we don't want to crash or affect the WebView
+            }
+        }
     }
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -45,72 +126,6 @@ class BrowserWebViewClient(
     }
 
     override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError?) = Unit
-
-    override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
-        handler?.cancel()
-    }
-
-    /**
-     * Inject UA override early in page lifecycle (onPageStarted)
-     * so navigator.userAgent is already spoofed before any JS runs.
-     * This is crucial for sites that check UA in inline scripts.
-     */
-    private fun injectUaEarly(view: WebView) {
-        val ua = view.settings.userAgentString ?: return
-        val isMobile = UserAgentManager.isMobileUA(ua)
-        val isChrome = UserAgentManager.isChromeUA(ua)
-        val major = UserAgentManager.extractMajorVersion(ua)
-        val platform = UserAgentManager.getPlatform(ua)
-        val vendor = UserAgentManager.getVendor(ua)
-        val secChUaPlatform = UserAgentManager.buildSecChUaPlatform(ua)
-        val mobileStr = if (isMobile) "?1" else "?0"
-
-        val js = """
-(function() {
-    var ua = ${ua.let { "\"${it.replace("\"", "\\\"")}\"" }};
-    var platform = "$platform";
-    var vendor = "$vendor";
-    var major = "$major";
-    var secChUaPlatform = $secChUaPlatform;
-    var isMobile = $isMobile;
-    try {
-        Object.defineProperty(navigator, 'userAgent', { get: function(){ return ua; }, configurable: true });
-        Object.defineProperty(navigator, 'platform', { get: function(){ return platform; }, configurable: true });
-        Object.defineProperty(navigator, 'vendor', { get: function(){ return vendor; }, configurable: true });
-        Object.defineProperty(navigator, 'appVersion', { get: function(){ return ua.replace('Mozilla/', ''); }, configurable: true });
-        Object.defineProperty(navigator, 'webdriver', { get: function(){ return false; }, configurable: true });
-        Object.defineProperty(navigator, 'languages', { get: function(){ return ['vi-VN','vi','en-US','en']; }, configurable: true });
-        Object.defineProperty(navigator, 'hardwareConcurrency', { get: function(){ return isMobile ? 8 : 8; }, configurable: true });
-        Object.defineProperty(navigator, 'deviceMemory', { get: function(){ return 8; }, configurable: true });
-        Object.defineProperty(navigator, 'maxTouchPoints', { get: function(){ return isMobile ? 5 : 0; }, configurable: true });
-        try { navigator.userAgent.toString = function() { return ua; }; } catch(e) {}
-        try {
-            Object.defineProperty(navigator, 'userAgentData', {
-                get: function() {
-                    return {
-                        brands: [{brand:"Chromium",version:major},{brand:"Google Chrome",version:major},{brand:"Not-A.Brand",version:"99"}],
-                        mobile: isMobile,
-                        platform: secChUaPlatform.replace(/"/g,''),
-                        getHighEntropyValues: function(hints) {
-                            return Promise.resolve({
-                                brands: this.brands, mobile: this.mobile,
-                                platform: this.platform, platformVersion: "14.0.0",
-                                architecture: isMobile ? "arm" : "x86", bitness: "64",
-                                model: isMobile ? "Pixel 8" : "", uaFullVersion: major+".0.0.0", wow64: false
-                            });
-                        }
-                    };
-                }, configurable: true
-            });
-        } catch(e) {}
-        ['callPhantom','_phantom','__nightmare','Buffer','domAutomation','domAutomationController','cdc_adoQpoasnfa76pfcZLmcfl_Array'].forEach(function(k){ try{ delete window[k]; }catch(e){} });
-        try { delete window.navigator.__proto__.webdriver; } catch(e) {}
-        if (!window.chrome) window.chrome = { runtime: {}, app: {}, csi: function(){}, loadTimes: function(){} };
-    } catch(e) {}
-})();
-""".trimIndent()
-        view.evaluateJavascript(js, null)
-    }
 }
 
 class BrowserChromeClient(
@@ -119,14 +134,24 @@ class BrowserChromeClient(
 ) : WebChromeClient() {
     override fun onProgressChanged(view: WebView, newProgress: Int) = onProgressChanged(newProgress)
     override fun onReceivedTitle(view: WebView, title: String)      = onTitleReceived(title)
+
+    // Fix: Don't auto-grant all permissions - only grant media-related permissions
+    // for video capture sites. Show a dialog for sensitive permissions.
     override fun onPermissionRequest(request: PermissionRequest) {
-        val safe = request.resources.filter {
-            it != PermissionRequest.RESOURCE_VIDEO_CAPTURE &&
-            it != PermissionRequest.RESOURCE_AUDIO_CAPTURE &&
-            it != PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID
+        val mediaResources = request.resources.filter {
+            it == PermissionRequest.RESOURCE_VIDEO_CAPTURE ||
+            it == PermissionRequest.RESOURCE_AUDIO_CAPTURE ||
+            it == PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID
         }
-        if (safe.isNotEmpty()) { request.grant(safe.toTypedArray()) }
-        else { request.deny() }
+        if (mediaResources.isNotEmpty() && mediaResources.size == request.resources.size) {
+            // Only media permissions requested - grant them for video sites
+            request.grant(mediaResources.toTypedArray())
+        } else {
+            // Other sensitive permissions (geolocation, etc) - deny by default
+            // User can still grant through the website's own permission UI
+            request.deny()
+        }
     }
-    override fun onConsoleMessage(consoleMessage: ConsoleMessage)   = true
+
+    override fun onConsoleMessage(consoleMessage: ConsoleMessage) = true
 }

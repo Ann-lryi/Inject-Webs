@@ -12,12 +12,14 @@ import android.text.TextWatcher
 import android.view.*
 import android.webkit.WebView
 import android.widget.*
+import androidx.core.widget.NestedScrollView
 import androidx.recyclerview.widget.*
-import com.aho.streambrowser.detector.BoundedStringBuilder
 import com.aho.streambrowser.detector.StreamDetector
 import com.aho.streambrowser.model.NetworkRequest
 import com.aho.streambrowser.model.StreamItem
 import com.aho.streambrowser.util.*
+import com.google.android.material.bottomsheet.BottomSheetBehavior
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.google.android.material.tabs.TabLayout
 import kotlinx.coroutines.*
@@ -37,6 +39,23 @@ class DevToolsSheet(
 
     override fun onCreateView(i: LayoutInflater, c: ViewGroup?, s: Bundle?) = buildRoot()
     override fun onDestroyView() { super.onDestroyView(); scope.cancel() }
+
+    // ── Fix: Configure bottom sheet to expand fully and scroll properly ──
+    override fun onCreateDialog(savedInstanceState: Bundle?) = super.onCreateDialog(savedInstanceState).also { dialog ->
+        dialog.setOnShowListener { dlg ->
+            val bottomSheet = (dlg as? BottomSheetDialog)?.findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)
+            bottomSheet?.let {
+                val behavior = BottomSheetBehavior.from(it)
+                behavior.state = BottomSheetBehavior.STATE_EXPANDED
+                behavior.skipCollapsed = true
+                // Allow the bottom sheet to take up to 90% of screen height
+                val displayMetrics = resources.displayMetrics
+                val maxHeight = (displayMetrics.heightPixels * 0.9).toInt()
+                it.layoutParams = it.layoutParams.apply { height = maxHeight }
+                behavior.peekHeight = maxHeight
+            }
+        }
+    }
 
     // ── Root ──────────────────────────────────────────────────────────────────
     private fun buildRoot(): View {
@@ -67,17 +86,10 @@ class DevToolsSheet(
 
         val btnClearAll = btn(ctx, "🗑", "#E24B4A").apply {
             setOnClickListener {
-                AlertDialog.Builder(ctx)
-                    .setTitle("Xoá tất cả?")
-                    .setMessage("Xoá tất cả dữ liệu streams và requests?")
-                    .setPositiveButton("Có") { _, _ ->
-                        detector.clear()
-                        refreshTabs()
-                        contentFrame.removeAllViews()
-                        showTab(currentTab)
-                    }
-                    .setNegativeButton("Không", null)
-                    .show()
+                detector.clearAll()
+                refreshTabs()
+                contentFrame.removeAllViews()
+                showTab(currentTab)
             }
         }
         tabRow.addView(tabLayout)
@@ -86,7 +98,7 @@ class DevToolsSheet(
         outer.addView(divider(ctx))
 
         contentFrame = FrameLayout(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(MATCH, 580.dp)
+            layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
         }
         outer.addView(contentFrame)
         showTab(0)
@@ -94,7 +106,7 @@ class DevToolsSheet(
         tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
             override fun onTabSelected(t: TabLayout.Tab) { currentTab=t.position; contentFrame.removeAllViews(); showTab(t.position) }
             override fun onTabUnselected(t: TabLayout.Tab) {}
-            override fun onTabReselected(t: TabLayout.Tab) { contentFrame.removeAllViews(); showTab(t.position) }
+            override fun onTabReselected(t: TabLayout.Tab) {}
         })
         return outer
     }
@@ -128,40 +140,32 @@ class DevToolsSheet(
         else -> {}
     }
 
-    // ── 1. Network (Enhanced with response info) ──────────────────────────────
+    // ── 1. Network ────────────────────────────────────────────────────────────
     private fun showNetworkTab() {
         val ctx = requireContext()
         val container = col(ctx)
-
-        // Filter row
         val filterRow = row(ctx, "#141414").apply { setPadding(12.dp,6.dp,8.dp,6.dp) }
         val searchBox = editText(ctx, "Lọc URL...")
         val btnX = btn(ctx, "✕", "#888888")
-        // Filter type buttons
-        val btnAll = btn(ctx, "All", "#37474F", "#FFFFFF").apply { setPadding(8.dp,2.dp,8.dp,2.dp) }
-        val btnStream = btn(ctx, "Stream", "#1B5E20", "#FFFFFF").apply { setPadding(8.dp,2.dp,8.dp,2.dp) }
-        val btnApi = btn(ctx, "API", "#0D47A1", "#FFFFFF").apply { setPadding(8.dp,2.dp,8.dp,2.dp) }
-        val btnJs = btn(ctx, "JS", "#E65100", "#FFFFFF").apply { setPadding(8.dp,2.dp,8.dp,2.dp) }
         filterRow.addView(searchBox)
         filterRow.addView(btnX)
-        filterRow.addView(btnAll)
-        filterRow.addView(btnStream)
-        filterRow.addView(btnApi)
-        filterRow.addView(btnJs)
         container.addView(filterRow)
         container.addView(divider(ctx))
 
-        val rv = RecyclerView(ctx).apply { layoutManager=LinearLayoutManager(ctx); layoutParams=LinearLayout.LayoutParams(MATCH,0,1f) }
+        val rv = RecyclerView(ctx).apply {
+            layoutManager = LinearLayoutManager(ctx)
+            layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
+            isNestedScrollingEnabled = false
+            // Fix: Improve scroll performance
+            setHasFixedSize(false)
+            overScrollMode = View.OVER_SCROLL_NEVER
+        }
         val adapter = NetworkAdapter(detector.requests) { showRequestDetail(it) }
         rv.adapter = adapter
         container.addView(rv)
 
         searchBox.addTextChangedListener(tw { adapter.filter(it) })
         btnX.setOnClickListener { searchBox.setText("") }
-        btnAll.setOnClickListener { adapter.filterByType(null) }
-        btnStream.setOnClickListener { adapter.filterByType("stream") }
-        btnApi.setOnClickListener { adapter.filterByType("api") }
-        btnJs.setOnClickListener { adapter.filterByType("js") }
         contentFrame.addView(container)
     }
 
@@ -173,7 +177,12 @@ class DevToolsSheet(
             contentFrame.addView(centerText(ctx, "Chưa có stream.\nHãy nhấn Play trên trang."))
             return
         }
-        val rv = RecyclerView(ctx).apply { layoutManager=LinearLayoutManager(ctx); layoutParams=FrameLayout.LayoutParams(MATCH,MATCH) }
+        val rv = RecyclerView(ctx).apply {
+            layoutManager = LinearLayoutManager(ctx)
+            layoutParams = FrameLayout.LayoutParams(MATCH, MATCH)
+            isNestedScrollingEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+        }
         rv.adapter = StreamAdapter(
             onCopy  = { copy(it.url) },
             onPlay  = { onPlayStream(it); dismiss() },
@@ -213,20 +222,16 @@ class DevToolsSheet(
         container.addView(scroll)
         val presets = listOf(
             "Hook XHR"        to "(function(){var _s=XMLHttpRequest.prototype.send;window.__xhr_log=window.__xhr_log||[];XMLHttpRequest.prototype.send=function(b){this.addEventListener('load',function(){var u=this.responseURL||'';if(u)window.__xhr_log.push({url:u,status:this.status,len:this.responseText.length});try{SBridge.onRequest(u,'xhr_hook','GET');}catch(e){}});return _s.apply(this,arguments);};return 'XHR hooked.';})();",
-            "Dump XHR"        to "(function(){if(!window.__xhr_log||!window.__xhr_log.length)return 'No log.';return window.__xhr_log.slice(-20).map(function(x){return x.status+' '+x.url;}).join('\\n');})()",
+            "Dump XHR"        to "(function(){if(!window.__xhr_log||!window.__xhr_log.length)return 'No log.';return window.__xhr_log.slice(-8).map(function(x){return x.status+' '+x.url;}).join('\\n');})()",
             "Hook Fetch"      to "(function(){if(window.__fetch_hooked)return 'Already hooked';window.__fetch_hooked=true;var _f=window.fetch;window.__fetch_log=[];window.fetch=function(i,o){var u=typeof i==='string'?i:(i&&i.url)||'';return _f.apply(this,arguments).then(function(r){var url=r.url||u;window.__fetch_log.push({url:url,status:r.status});try{SBridge.onRequest(url,'fetch_hook','GET');}catch(e){}return r;});};return 'Fetch hooked.';})();",
-            "Dump Fetch"      to "(function(){if(!window.__fetch_log||!window.__fetch_log.length)return 'No log.';return window.__fetch_log.slice(-20).map(function(x){return x.status+' '+x.url;}).join('\\n');})()",
+            "Dump Fetch"      to "(function(){if(!window.__fetch_log||!window.__fetch_log.length)return 'No log.';return window.__fetch_log.slice(-8).map(function(x){return x.status+' '+x.url;}).join('\\n');})()",
             "Hook HLS.js"     to "(function(){if(!window.Hls)return 'No Hls.js';if(window.__hls_hooked)return 'Already hooked';window.__hls_hooked=true;var o=Hls.prototype.loadSource;Hls.prototype.loadSource=function(url){try{SBridge.onRequest(url,'hlsjs','GET');}catch(e){}return o.apply(this,arguments);};return 'HLS.js hooked!';})();",
             "Hook MSE"        to "(function(){if(window.__ms_hooked)return 'Already hooked';window.__ms_hooked=true;var o=MediaSource.prototype.addSourceBuffer;MediaSource.prototype.addSourceBuffer=function(mime){try{SBridge.onRequest('mse://'+encodeURIComponent(mime),'mse','GET');}catch(e){}return o.apply(this,arguments);};return 'MSE hooked.';})();",
-            "Hook videojs"    to "(function(){if(!window.videojs)return 'No videojs';if(window.__vjs_hooked)return 'Already hooked';window.__vjs_hooked=true;var _orig=window.videojs;window.videojs=function(el,opts,ready){try{if(opts&&opts.sources)opts.sources.forEach(function(s){if(s&&s.src)try{SBridge.onRequest(s.src,'videojs_hook','GET');}catch(e){}});if(opts&&opts.src)try{SBridge.onRequest(opts.src,'videojs_hook','GET');}catch(e){}}catch(e){}return _orig.apply(this,arguments);};Object.assign(window.videojs,_orig);return 'video.js hooked!';})();",
-            "Hook play()"     to "(function(){if(window.__play_hooked)return 'Already hooked';window.__play_hooked=true;var _p=HTMLVideoElement.prototype.play;HTMLVideoElement.prototype.play=function(){try{var s=this.src||this.currentSrc||(this.querySelector&&this.querySelector('source')?this.querySelector('source').src:'');if(s)try{SBridge.onRequest(s,'play_hook','GET');}catch(e){}}catch(e){}return _p.apply(this,arguments);};return 'play() hooked!';})();",
-            "All video src"   to "(function(){var v=[].slice.call(document.querySelectorAll('video'));var out=[];v.forEach(function(el,i){out.push('Video'+i+': src='+el.src+' currentSrc='+el.currentSrc);if(el.textTracks)out.push('  tracks='+el.textTracks.length);});return out.length?out.join('\\n'):'no video elements';})()",
-            "Quét players"    to "(function(){var keys=['player','_player','videojs','jwplayer','hls','Hls','dash','shaka','flvjs','clappr','bitmovin','ZP','Plyr','DPlayer','xgplayer','tcplayer','Aliplayer','Artplayer'];var found=[];keys.forEach(function(k){if(window[k]!=null)found.push(k+':'+typeof window[k]);});return found.length?found.join('\\n'):'none';})()",
-            "Tìm keys/tokens" to "(function(){var txt=document.documentElement.innerHTML.slice(0,200000);var out=[];var pats=[['key',/[\"']key[\"']\\s*:\\s*[\"']([^\"']{6,80})[\"']/gi],['token',/[\"']token[\"']\\s*:\\s*[\"']([^\"']{6,200})[\"']/gi],['secret',/[\"']secret[\"']\\s*:\\s*[\"']([^\"']{6,80})[\"']/gi],['apiKey',/[\"']apiKey[\"']\\s*:\\s*[\"']([^\"']{6,80})[\"']/gi],['api_key',/[\"']api_key[\"']\\s*:\\s*[\"']([^\"']{6,80})[\"']/gi]];pats.forEach(function(p){var m;p[1].lastIndex=0;while((m=p[1].exec(txt))!==null&&out.length<12)out.push(p[0]+': '+m[1]);});return out.length?out.join('\\n'):'none';})()",
-            "Base64 decode"   to "(function(){var html=document.documentElement.innerHTML;var ms=html.match(/[\"']([A-Za-z0-9+\\/]{40,}={0,2})[\"']/g)||[];var out=[];ms.slice(0,50).forEach(function(m){try{var d=atob(m.replace(/[\"']/g,''));if(d.indexOf('http')!==-1||d.indexOf('m3u8')!==-1||d.indexOf('.mp4')!==-1)out.push(d.slice(0,300));}catch(e){}});return out.length?out.join('\\n'):'none';})()",
+            "Quét players"    to "(function(){var keys=['player','_player','videojs','jwplayer','hls','Hls','dash','shaka','flvjs','clappr','bitmovin','ZP'];var found=[];keys.forEach(function(k){if(window[k]!=null)found.push(k+':'+typeof window[k]);});return found.length?found.join('\\n'):'none';})()",
+            "Tìm keys/tokens" to "(function(){var txt=document.documentElement.innerHTML.slice(0,200000);var out=[];var pats=[['key',/[\"']key[\"']\\s*:\\s*[\"']([^\"']{6,80})[\"']/gi],['token',/[\"']token[\"']\\s*:\\s*[\"']([^\"']{6,200})[\"']/gi],['secret',/[\"']secret[\"']\\s*:\\s*[\"']([^\"']{6,80})[\"']/gi]];pats.forEach(function(p){var m;p[1].lastIndex=0;while((m=p[1].exec(txt))!==null&&out.length<12)out.push(p[0]+': '+m[1]);});return out.length?out.join('\\n'):'none';})()",
+            "Base64 decode"   to "(function(){var html=document.documentElement.innerHTML;var ms=html.match(/[\"']([A-Za-z0-9+\\/]{40,}={0,2})[\"']/g)||[];var out=[];ms.slice(0,30).forEach(function(m){try{var d=atob(m.replace(/[\"']/g,''));if(d.indexOf('http')!==-1||d.indexOf('m3u8')!==-1)out.push(d.slice(0,200));}catch(e){}});return out.length?out.join('\\n'):'none';})()",
             "Cookie+Storage"  to "(function(){var r={cookies:document.cookie};try{r.local=[].concat(Object.keys(localStorage)).map(function(k){return k+'='+localStorage.getItem(k)}).join('; ');}catch(e){r.local='blocked';}try{r.session=[].concat(Object.keys(sessionStorage)).map(function(k){return k+'='+sessionStorage.getItem(k)}).join('; ');}catch(e){r.session='blocked';}return JSON.stringify(r,null,2);})()",
             "Tất cả iframes"  to "(function(){var f=[].slice.call(document.querySelectorAll('iframe'));return f.length?f.map(function(el,i){return i+': '+(el.src||el.getAttribute('src')||'no-src');}).join('\\n'):'none';})()",
-            "Deep scan"       to "(function(){var html=document.documentElement.innerHTML;var out=[];var pats=[/https?:\\/\\/[^\\s\"'<>]+\\.m3u8[^\\s\"'<>]*/gi,/https?:\\/\\/[^\\s\"'<>]+\\.mp4[^\\s\"'<>]*/gi,/https?:\\/\\/[^\\s\"'<>]+\\.mpd[^\\s\"'<>]*/gi,/https?:\\/\\/[^\\s\"'<>]+\\.flv[^\\s\"'<>]*/gi,/https?:\\/\\/[^\\s\"'<>]*(?:cdn|stream|media|video|vod)[^\\s\"'<>]*/gi];pats.forEach(function(re){re.lastIndex=0;var m;while((m=re.exec(html))!==null&&out.length<30){if(out.indexOf(m[0])===-1)out.push(m[0]);}});return out.length?out.join('\\n'):'nothing found';})()",
         )
         addPresets(ctx, container, presets, tv, scroll, detector.deepLog)
         container.addView(divider(ctx))
@@ -237,10 +242,9 @@ class DevToolsSheet(
     // ── 5. HTML Viewer ────────────────────────────────────────────────────────
     private fun showHtmlTab() {
         val ctx = requireContext()
-        val activityRef = requireActivity() as? MainActivity
+        val activity = requireActivity() as? MainActivity
         val container = col(ctx)
 
-        // Mode buttons
         val modeRow = row(ctx, "#141414").apply { setPadding(10.dp, 8.dp, 10.dp, 8.dp) }
         val btnFull = Button(ctx).apply {
             text = "📄 Full HTML"; textSize = 11f; setTextColor(Color.WHITE)
@@ -255,13 +259,11 @@ class DevToolsSheet(
             layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f).apply { marginStart = 8.dp }
         }
         modeRow.addView(btnFull); modeRow.addView(btnPicker); modeRow.addView(tvInfo)
-        container.addView(modeRow)
-        container.addView(divider(ctx))
+        container.addView(modeRow); container.addView(divider(ctx))
 
-        // Search
         val searchRow = row(ctx, "#0D0D0D").apply { setPadding(8.dp, 4.dp, 8.dp, 4.dp) }
         val searchBox = EditText(ctx).apply {
-            hint = "Tìm trong HTML..."; setHintTextColor(Color.parseColor("#444444"))
+            hint = "🔍  Tìm trong HTML..."; setHintTextColor(Color.parseColor("#444444"))
             setTextColor(Color.parseColor("#EFEFEF")); textSize = 11f
             typeface = android.graphics.Typeface.MONOSPACE; background = null
             layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
@@ -273,20 +275,16 @@ class DevToolsSheet(
         searchRow.addView(searchBox); searchRow.addView(tvMatch)
         container.addView(searchRow); container.addView(divider(ctx))
 
-        // Output
-        val scroll = ScrollView(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
-            setBackgroundColor(Color.parseColor("#080808"))
-        }
+        val scroll = nsv(ctx, "#080808")
         val outputTv = TextView(ctx).apply {
-            text = "📄 Full HTML – lấy toàn bộ HTML trang\n\n✏ Element Picker – đóng panel, tap vào element trên trang → dialog hiện HTML"
+            text = "📄 Full HTML – lấy toàn bộ HTML trang\n\n✏ Element Picker – đóng panel, tap vào element trên trang → dialog hiện HTML của đúng element đó"
             setTextColor(Color.parseColor("#555555")); textSize = 11f
             typeface = android.graphics.Typeface.MONOSPACE; setPadding(14.dp, 14.dp, 14.dp, 14.dp)
             setTextIsSelectable(true)
         }
-        scroll.addView(outputTv); container.addView(scroll); container.addView(divider(ctx))
+        scroll.addView(outputTv); container.addView(scroll)
+        container.addView(divider(ctx))
 
-        // Action row
         val actionRow = row(ctx, "#141414").apply { setPadding(8.dp, 6.dp, 8.dp, 6.dp) }
         val btnCopyAll = Button(ctx).apply {
             text = "Copy All"; textSize = 11f; setTextColor(Color.WHITE)
@@ -308,24 +306,18 @@ class DevToolsSheet(
         actionRow.addView(btnCopyAll); actionRow.addView(btnCopy3k); actionRow.addView(tvSize)
         container.addView(actionRow)
 
-        // State & logic
         var currentHtml = ""
-
         fun displayHtml(html: String) {
             currentHtml = html
-            outputTv.setTextColor(Color.parseColor("#00FF41"))
-            outputTv.text = html
+            outputTv.setTextColor(Color.parseColor("#00FF41")); outputTv.text = html
             val kb = html.length / 1024f
             tvSize.text = "${String.format("%.1f", kb)} KB"
             btnCopyAll.isEnabled = true; btnCopyAll.alpha = 1f
-            btnCopy3k.isEnabled = true; btnCopy3k.alpha = 1f
+            btnCopy3k.isEnabled  = true; btnCopy3k.alpha  = 1f
             scroll.post { scroll.scrollTo(0, 0) }
         }
-
         btnFull.setOnClickListener {
-            tvSize.text = "Đang tải..."
-            outputTv.setTextColor(Color.parseColor("#888888"))
-            outputTv.text = "Đang lấy HTML..."
+            tvSize.text = "Đang tải..."; outputTv.setTextColor(Color.parseColor("#888888")); outputTv.text = "Đang lấy HTML..."
             webView.evaluateJavascript("document.documentElement.outerHTML") { result ->
                 requireActivity().runOnUiThread {
                     val html = result?.takeIf { it != "null" }
@@ -338,39 +330,32 @@ class DevToolsSheet(
                 }
             }
         }
-
-        btnPicker.setOnClickListener { dismiss(); activityRef?.activatePicker() }
-
+        btnPicker.setOnClickListener { dismiss(); activity?.activatePicker() }
         btnCopyAll.setOnClickListener {
             if (currentHtml.isEmpty()) return@setOnClickListener
-            copy(currentHtml)
-            Toast.makeText(ctx, "Đã copy ${currentHtml.length} ký tự", Toast.LENGTH_SHORT).show()
+            copy(currentHtml); Toast.makeText(ctx, "Đã copy ${currentHtml.length} ký tự", Toast.LENGTH_SHORT).show()
         }
         btnCopy3k.setOnClickListener {
             if (currentHtml.isEmpty()) return@setOnClickListener
-            copy(currentHtml.take(3000))
-            Toast.makeText(ctx, "Đã copy ${minOf(currentHtml.length, 3000)} ký tự", Toast.LENGTH_SHORT).show()
+            copy(currentHtml.take(3000)); Toast.makeText(ctx, "Đã copy ${minOf(currentHtml.length, 3000)} ký tự", Toast.LENGTH_SHORT).show()
         }
-
-        // Search + highlight
         searchBox.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun afterTextChanged(s: Editable?) {
                 val q = s.toString()
                 if (q.isEmpty() || currentHtml.isEmpty()) { outputTv.text = currentHtml; tvMatch.text = ""; return }
-                val regex = Regex(Regex.escape(q), RegexOption.IGNORE_CASE)
-                val count = regex.findAll(currentHtml).count()
+                var count = 0; var countIdx = 0
+                while (currentHtml.indexOf(q, countIdx, ignoreCase = true).also { countIdx = it } >= 0) { count++; countIdx += 1 }
                 tvMatch.text = "$count kết quả"
                 val span = android.text.SpannableString(currentHtml)
-                var n = 0
-                regex.findAll(currentHtml).forEach { match ->
-                    if (n >= 200) return@forEach
+                var idx = currentHtml.indexOf(q, ignoreCase = true); var n = 0
+                while (idx >= 0 && n < 200) {
                     span.setSpan(android.text.style.BackgroundColorSpan(Color.parseColor("#FFD700")),
-                        match.range.first, match.range.last + 1, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        idx, idx + q.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     span.setSpan(android.text.style.ForegroundColorSpan(Color.BLACK),
-                        match.range.first, match.range.last + 1, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    n++
+                        idx, idx + q.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    idx = currentHtml.indexOf(q, idx + 1, ignoreCase = true); n++
                 }
                 outputTv.text = span
             }
@@ -383,7 +368,6 @@ class DevToolsSheet(
         val ctx = requireContext()
         val container = col(ctx)
         container.addView(tv(ctx, "Paste URL m3u8 để xem danh sách chất lượng:", "#888888", 11f).apply { setPadding(12.dp,10.dp,12.dp,4.dp) })
-
         val inputRow = row(ctx, "#141414").apply { setPadding(8.dp,6.dp,8.dp,6.dp) }
         val urlBox = editText(ctx, "https://example.com/master.m3u8").apply {
             detector.streams.firstOrNull { it.url.contains("m3u8") }?.let { setText(it.url) }
@@ -393,7 +377,9 @@ class DevToolsSheet(
         container.addView(inputRow); container.addView(divider(ctx))
 
         val resultContainer = col(ctx)
-        val scrollResult = ScrollView(ctx).apply { layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f) }
+        val scrollResult = nsv(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
+        }
         scrollResult.addView(resultContainer)
         container.addView(scrollResult)
 
@@ -416,13 +402,10 @@ class DevToolsSheet(
                 qualities.forEach { q ->
                     val card = col(ctx, "#242424").apply {
                         setPadding(12.dp,10.dp,12.dp,10.dp)
-                        val lp = LinearLayout.LayoutParams(MATCH, WRAP)
-                        lp.setMargins(8.dp,4.dp,8.dp,0); layoutParams = lp
+                        val lp = LinearLayout.LayoutParams(MATCH, WRAP); lp.setMargins(8.dp,4.dp,8.dp,0); layoutParams = lp
                     }
                     card.addView(tv(ctx, "📺 ${q.label}", "#EFEFEF", 13f).apply { typeface = android.graphics.Typeface.DEFAULT_BOLD })
-                    card.addView(tv(ctx, q.url, "#888888", 10f).apply {
-                        typeface = android.graphics.Typeface.MONOSPACE; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
-                    })
+                    card.addView(tv(ctx, q.url, "#888888", 10f).apply { typeface = android.graphics.Typeface.MONOSPACE; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE })
                     val btnRow = row(ctx)
                     btnRow.addView(btn(ctx, "Copy", "#0D47A1", "#FFFFFF").apply { setOnClickListener { copy(q.url) } })
                     btnRow.addView(btn(ctx, "Phát", "#1D9E75", "#FFFFFF").apply {
@@ -432,8 +415,7 @@ class DevToolsSheet(
                             if (stream != null) { onPlayStream(stream); dismiss() }
                         }
                     })
-                    card.addView(btnRow)
-                    resultContainer.addView(card)
+                    card.addView(btnRow); resultContainer.addView(card)
                 }
             }
         }
@@ -444,7 +426,7 @@ class DevToolsSheet(
     private fun showBlockerTab() {
         val ctx = requireContext()
         val container = col(ctx)
-        container.addView(ScrollView(ctx).apply {
+        container.addView(nsv(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
             addView(col(ctx).apply {
                 setPadding(12.dp, 8.dp, 12.dp, 8.dp)
@@ -452,8 +434,7 @@ class DevToolsSheet(
                 val builtinRow = row(ctx)
                 builtinRow.addView(tv(ctx, "Block ads/trackers mặc định", "#EFEFEF", 12f).apply { layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f) })
                 val sw = Switch(ctx).apply { isChecked = blocker.isBuiltinEnabled(); setOnCheckedChangeListener { _, v -> blocker.setBuiltinEnabled(v) } }
-                builtinRow.addView(sw)
-                addView(builtinRow)
+                builtinRow.addView(sw); addView(builtinRow)
                 addView(divider(ctx).apply { (layoutParams as LinearLayout.LayoutParams).setMargins(0,8.dp,0,8.dp) })
                 addView(tv(ctx, "Custom patterns:", "#888888", 11f))
                 val patterns = blocker.getCustomPatterns()
@@ -468,8 +449,7 @@ class DevToolsSheet(
                 val addRow = row(ctx, "#141414").apply { setPadding(8.dp,6.dp,8.dp,6.dp) }
                 val input = editText(ctx, "vd: ads.example.com")
                 val btnAdd = btn(ctx, "Thêm", "#1D9E75", "#FFFFFF")
-                addRow.addView(input); addRow.addView(btnAdd)
-                addView(addRow)
+                addRow.addView(input); addRow.addView(btnAdd); addView(addRow)
                 btnAdd.setOnClickListener {
                     val p = input.text.toString().trim()
                     if (p.isNotEmpty()) { blocker.addPattern(p); contentFrame.removeAllViews(); showBlockerTab() }
@@ -479,54 +459,39 @@ class DevToolsSheet(
         contentFrame.addView(container)
     }
 
-    // ── 8. User-Agent (Enhanced) ──────────────────────────────────────────────
+    // ── 8. User-Agent ────────────────────────────────────────────────────────
     private fun showUaTab() {
         val ctx = requireContext()
         val container = col(ctx)
         val current = UserAgentManager.load(ctx)
-        container.addView(ScrollView(ctx).apply {
+        container.addView(nsv(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
             addView(col(ctx).apply {
                 setPadding(12.dp, 8.dp, 12.dp, 8.dp)
-                // Current UA display
                 addView(tv(ctx, "Current UA:", "#888888", 10f))
-                addView(tv(ctx, current, "#1D9E75", 10f).apply {
-                    typeface = android.graphics.Typeface.MONOSPACE; maxLines = 3; setPadding(0, 4.dp, 0, 8.dp)
-                })
-                // Client Hints info
-                val secChUa = UserAgentManager.buildSecChUa(current)
-                val secChUaPlatform = UserAgentManager.buildSecChUaPlatform(current)
-                val platform = UserAgentManager.getPlatform(current)
-                val isMobile = UserAgentManager.isMobileUA(current)
-                addView(tv(ctx, "Sec-CH-UA: $secChUa", "#4FC3F7", 9f).apply { typeface = android.graphics.Typeface.MONOSPACE; setPadding(0, 0, 0, 2.dp) })
-                addView(tv(ctx, "Platform: $platform | Mobile: $isMobile", "#4FC3F7", 9f).apply { typeface = android.graphics.Typeface.MONOSPACE; setPadding(0, 0, 0, 8.dp) })
+                addView(tv(ctx, current, "#1D9E75", 10f).apply { typeface = android.graphics.Typeface.MONOSPACE; maxLines = 3; setPadding(0, 4.dp, 0, 12.dp) })
                 addView(divider(ctx))
-
-                // UA preset cards
                 UserAgentManager.presets.forEach { (name, ua) ->
                     val isActive = ua == current
                     val card = col(ctx, if (isActive) "#1A2A1A" else "#242424").apply {
                         setPadding(12.dp, 10.dp, 12.dp, 10.dp)
-                        val lp = LinearLayout.LayoutParams(MATCH, WRAP)
-                        lp.setMargins(0, 6.dp, 0, 0); layoutParams = lp
+                        val lp = LinearLayout.LayoutParams(MATCH, WRAP); lp.setMargins(0, 6.dp, 0, 0); layoutParams = lp
                     }
                     card.addView(tv(ctx, (if (isActive) "✓ " else "") + name, if (isActive) "#1D9E75" else "#EFEFEF", 13f).apply { typeface = android.graphics.Typeface.DEFAULT_BOLD })
-                    card.addView(tv(ctx, ua.take(80) + if (ua.length > 80) "..." else "", "#888888", 9f).apply {
-                        typeface = android.graphics.Typeface.MONOSPACE; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
-                    })
+                    card.addView(tv(ctx, ua, "#888888", 9f).apply { typeface = android.graphics.Typeface.MONOSPACE; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END })
                     card.setOnClickListener {
-                        applyUa(ctx, ua, name)
+                        UserAgentManager.save(ctx, ua); webView.settings.userAgentString = ua
+                        injectUaOverride(ua)
+                        Toast.makeText(ctx, "✓ UA: $name\nTrang sẽ reload để áp dụng", Toast.LENGTH_SHORT).show()
+                        webView.reload(); contentFrame.removeAllViews(); showUaTab()
                     }
                     addView(card)
                 }
-
-                // Custom UA input
                 addView(divider(ctx).apply { (layoutParams as LinearLayout.LayoutParams).setMargins(0, 12.dp, 0, 8.dp) })
                 addView(tv(ctx, "Custom UA:", "#888888", 11f))
                 val customInput = EditText(ctx).apply {
-                    setText(current); setTextColor(Color.parseColor("#EFEFEF"))
-                    setHintTextColor(Color.parseColor("#555555")); textSize = 11f
-                    typeface = android.graphics.Typeface.MONOSPACE; background = null
+                    setText(current); setTextColor(Color.parseColor("#EFEFEF")); setHintTextColor(Color.parseColor("#555555"))
+                    textSize = 11f; typeface = android.graphics.Typeface.MONOSPACE; background = null
                     layoutParams = LinearLayout.LayoutParams(MATCH, WRAP); minLines = 2
                 }
                 addView(customInput)
@@ -534,7 +499,12 @@ class DevToolsSheet(
                     layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = 8.dp }
                     setOnClickListener {
                         val ua2 = customInput.text.toString().trim()
-                        if (ua2.isNotEmpty()) applyUa(ctx, ua2, "Custom")
+                        if (ua2.isNotEmpty()) {
+                            UserAgentManager.save(ctx, ua2); webView.settings.userAgentString = ua2
+                            injectUaOverride(ua2); webView.reload()
+                            Toast.makeText(ctx, "UA đã cập nhật, đang reload...", Toast.LENGTH_SHORT).show()
+                            contentFrame.removeAllViews(); showUaTab()
+                        }
                     }
                 })
             })
@@ -542,51 +512,44 @@ class DevToolsSheet(
         contentFrame.addView(container)
     }
 
-    private fun applyUa(ctx: Context, ua: String, name: String) {
-        UserAgentManager.save(ctx, ua)
-        webView.settings.userAgentString = ua
-        injectUaOverride(ua)
-        Toast.makeText(ctx, "UA: $name\nTrang sẽ reload", Toast.LENGTH_SHORT).show()
-        webView.reload()
-        contentFrame.removeAllViews(); showUaTab()
-    }
-
     // ── 9. Saved (Bookmark + History) ────────────────────────────────────────
     private fun showSavedTab() {
         val ctx = requireContext()
-        val activityRef = requireActivity() as? MainActivity ?: return
+        val activity = requireActivity() as? MainActivity ?: return
         val container = col(ctx)
         val bookmarks = BookmarkManager.getBookmarks(ctx)
         val history   = BookmarkManager.getHistory(ctx)
         val all       = bookmarks + history
 
-        if (all.isEmpty()) { contentFrame.addView(centerText(ctx, "Chưa có bookmark/history.\nLong-press nút Bookmark để xem danh sách.")); return }
+        if (all.isEmpty()) { contentFrame.addView(centerText(ctx, "Chưa có bookmark/history.\nLong-press nút Home để bookmark trang hiện tại.")); return }
 
-        val rv = RecyclerView(ctx).apply { layoutManager = LinearLayoutManager(ctx); layoutParams = FrameLayout.LayoutParams(MATCH, MATCH) }
+        val rv = RecyclerView(ctx).apply {
+            layoutManager = LinearLayoutManager(ctx)
+            layoutParams = FrameLayout.LayoutParams(MATCH, 0, 1f)
+            isNestedScrollingEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+        }
         rv.adapter = object : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
             inner class VH(val root: LinearLayout, val tvTitle: TextView, val tvUrl: TextView, val btnDel: Button) : RecyclerView.ViewHolder(root)
-
             override fun onCreateViewHolder(parent: ViewGroup, t: Int): VH {
                 val title = tv(ctx, "", "#EFEFEF", 12f).apply { typeface = android.graphics.Typeface.DEFAULT_BOLD; maxLines=1; ellipsize=android.text.TextUtils.TruncateAt.END }
                 val url   = tv(ctx, "", "#888888", 10f).apply { typeface=android.graphics.Typeface.MONOSPACE; maxLines=1; ellipsize=android.text.TextUtils.TruncateAt.MIDDLE; layoutParams=LinearLayout.LayoutParams(0,WRAP,1f) }
                 val del   = btn(ctx, "✕", "#E24B4A")
                 val urlRow = row(ctx); urlRow.addView(url); urlRow.addView(del)
                 val root2 = col(ctx, "#1A1A1A").apply {
-                    setPadding(12.dp,10.dp,12.dp,10.dp); addView(title); addView(urlRow)
+                    setPadding(12.dp,10.dp,12.dp,10.dp)
+                    addView(title); addView(urlRow)
                     addView(View(ctx).apply { setBackgroundColor(Color.parseColor("#2E2E2E")); layoutParams=LinearLayout.LayoutParams(MATCH,1).apply{topMargin=6.dp} })
                 }
                 return VH(root2, title, url, del)
             }
-
             override fun getItemCount() = all.size
             override fun onBindViewHolder(h: RecyclerView.ViewHolder, pos: Int) {
                 val vh = h as VH; val e = all[pos]
-                vh.tvTitle.text = (if (e.isBookmark) "★ " else "  ") + e.title
-                vh.tvUrl.text   = e.url
-                vh.root.setOnClickListener { activityRef.navigateTo(e.url); dismiss() }
+                vh.tvTitle.text = (if (e.isBookmark) "★ " else "  ") + e.title; vh.tvUrl.text = e.url
+                vh.root.setOnClickListener { activity.navigateTo(e.url); dismiss() }
                 vh.btnDel.setOnClickListener {
-                    if (e.isBookmark) BookmarkManager.removeBookmark(ctx, e.url)
-                    else BookmarkManager.removeHistory(ctx, e.url)
+                    if (e.isBookmark) BookmarkManager.removeBookmark(ctx, e.url) else BookmarkManager.removeHistoryEntry(ctx, e.url)
                     contentFrame.removeAllViews(); showSavedTab()
                 }
             }
@@ -600,89 +563,124 @@ class DevToolsSheet(
         contentFrame.addView(container)
     }
 
-    // ── Request Detail (Enhanced - like DevTools desktop) ──────────────────────
+    // ── Request detail (DevTools-style with full sections) ─────────────────────
     private fun showRequestDetail(req: NetworkRequest) {
         val ctx = requireContext()
-        val sv = ScrollView(ctx)
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#0D0D0D"))
+        }
 
-        // Tab-like layout: General | Headers | Response | Timing
-        val container = col(ctx, "#0D0D0D")
+        val content = StringBuilder()
+        val sectionColor = "#1D9E75"
+        val labelColor = "#888888"
+        val valueColor = "#EFEFEF"
 
-        // ── General Info ──
-        container.addView(sectionHeader(ctx, "GENERAL"))
-        container.addView(infoRow(ctx, "URL", req.url))
-        container.addView(infoRow(ctx, "Method", req.method))
-        container.addView(infoRow(ctx, "Status", req.statusText.ifEmpty { "N/A" }))
-        container.addView(infoRow(ctx, "Source", req.source))
-        container.addView(infoRow(ctx, "Type", req.tag))
-        if (req.contentType.isNotEmpty())
-            container.addView(infoRow(ctx, "Content-Type", req.contentType))
-        if (req.duration > 0)
-            container.addView(infoRow(ctx, "Duration", "${req.duration}ms"))
+        fun section(title: String) {
+            content.append("\n").append(title).append("\n")
+            content.append("─────────────────────────────────\n")
+        }
+
+        // ── General ──
+        section("📋 General")
+        content.append("  Request URL: ").append(req.url).append("\n")
+        content.append("  Request Method: ").append(req.method).append("\n")
+        content.append("  Status Code: ").append(
+            if (req.statusCode > 0) "${req.statusCode} ${req.statusText}" else "(pending)"
+        ).append("\n")
+        if (req.mimeType.isNotEmpty()) content.append("  MIME Type: ").append(req.mimeType).append("\n")
+        if (req.contentLength >= 0) content.append("  Content-Length: ").append(formatSize(req.contentLength)).append("\n")
+        content.append("  Source: ").append(req.source).append("\n")
+        content.append("  Time: ").append(java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(req.timestamp))).append("\n")
+
+        // ── Query String Parameters ──
+        val queryParams = req.queryParameters
+        if (queryParams.isNotEmpty()) {
+            section("🔗 Query String Parameters")
+            queryParams.forEach { (k, v) ->
+                content.append("  ").append(k).append(": ").append(v).append("\n")
+            }
+        }
 
         // ── Request Headers ──
-        container.addView(sectionHeader(ctx, "REQUEST HEADERS"))
-        if (req.headers.isEmpty()) {
-            container.addView(tv(ctx, "  (không có)", "#555555", 10f).apply { setPadding(0,4.dp,0,4.dp) })
-        } else {
-            req.headers.forEach { (k, v) -> container.addView(infoRow(ctx, k, v)) }
+        if (req.headers.isNotEmpty()) {
+            section("📤 Request Headers")
+            req.headers.forEach { (k, v) -> content.append("  ").append(k).append(": ").append(v).append("\n") }
+        }
+
+        // ── Request Payload (POST Body) ──
+        if (req.requestBody.isNotEmpty()) {
+            section("📦 Request Payload")
+            val body = req.requestBody
+            // Try to pretty-print JSON
+            val prettyBody = try {
+                if (body.trimStart().startsWith("{") || body.trimStart().startsWith("[")) {
+                    org.json.JSONObject(body).toString(2)
+                } else body
+                } catch (_: Exception) { body }
+            content.append(prettyBody.take(4096))
+            if (body.length > 4096) content.append("\n  ... (truncated, ${body.length} bytes total)")
+            content.append("\n")
         }
 
         // ── Response Headers ──
         if (req.responseHeaders.isNotEmpty()) {
-            container.addView(sectionHeader(ctx, "RESPONSE HEADERS"))
-            req.responseHeaders.forEach { (k, v) -> container.addView(infoRow(ctx, k, v)) }
+            section("📥 Response Headers")
+            req.responseHeaders.forEach { (k, v) -> content.append("  ").append(k).append(": ").append(v).append("\n") }
         }
 
         // ── Response Body Preview ──
-        if (req.bodyPreview.isNotEmpty()) {
-            container.addView(sectionHeader(ctx, "RESPONSE BODY (preview)"))
-            val bodyTv = TextView(ctx).apply {
-                text = req.bodyPreview.take(2000)
-                setTextColor(Color.parseColor("#00FF41")); textSize = 10f
-                typeface = android.graphics.Typeface.MONOSPACE
-                setPadding(12.dp, 8.dp, 12.dp, 8.dp)
-                setTextIsSelectable(true)
-                maxLines = 20
-            }
-            container.addView(bodyTv)
+        if (req.responseBodyPreview.isNotEmpty()) {
+            section("📄 Response Body Preview")
+            val body = req.responseBodyPreview
+            // Try to pretty-print JSON
+            val prettyBody = try {
+                if (body.trimStart().startsWith("{") || body.trimStart().startsWith("[")) {
+                    org.json.JSONObject(body).toString(2)
+                } else body
+                } catch (_: Exception) {
+                    try {
+                        org.json.JSONArray(body).toString(2)
+                    } catch (_: Exception) { body }
+                }
+            content.append(prettyBody.take(8192))
+            if (body.length > 8192) content.append("\n  ... (truncated, ${body.length} bytes total)")
+            content.append("\n")
+        } else if (req.statusCode > 0) {
+            section("📄 Response Body")
+            content.append("  (response body not captured for this request type)\n")
         }
 
-        sv.addView(container)
+        val tvDetail = TextView(ctx).apply {
+            text = content.toString()
+            setTextColor(Color.parseColor(valueColor))
+            textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setPadding(16.dp, 16.dp, 16.dp, 16.dp)
+            setTextIsSelectable(true)
+        }
+        val sv = NestedScrollView(ctx).apply { addView(tvDetail) }
+        container.addView(sv)
+
         AlertDialog.Builder(ctx)
             .setTitle("Request Detail")
-            .setView(sv)
+            .setView(container)
             .setPositiveButton("Copy URL")      { _,_ -> copy(req.url) }
             .setNeutralButton("Export cURL")    { _,_ -> copy(CurlExporter.toCurl(req)) }
             .setNegativeButton("Đóng", null)
             .show()
     }
 
-    private fun sectionHeader(ctx: Context, title: String) = TextView(ctx).apply {
-        text = title; setTextColor(Color.parseColor("#1D9E75")); textSize = 11f
-        typeface = android.graphics.Typeface.DEFAULT_BOLD
-        setPadding(12.dp, 10.dp, 12.dp, 4.dp)
-        setBackgroundColor(Color.parseColor("#141414"))
-    }
-
-    private fun infoRow(ctx: Context, key: String, value: String) = row(ctx).apply {
-        setPadding(12.dp, 2.dp, 12.dp, 2.dp)
-        addView(TextView(ctx).apply {
-            text = "$key: "; setTextColor(Color.parseColor("#4FC3F7")); textSize = 10f
-            typeface = android.graphics.Typeface.MONOSPACE
-            layoutParams = LinearLayout.LayoutParams(WRAP, WRAP)
-        })
-        addView(TextView(ctx).apply {
-            text = value; setTextColor(Color.parseColor("#EFEFEF")); textSize = 10f
-            typeface = android.graphics.Typeface.MONOSPACE
-            layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
-            setTextIsSelectable(true)
-        })
+    private fun formatSize(bytes: Long): String = when {
+        bytes < 0 -> "unknown"
+        bytes < 1024 -> "$bytes B"
+        bytes < 1024 * 1024 -> "${String.format("%.1f", bytes / 1024.0)} KB"
+        else -> "${String.format("%.1f", bytes / (1024.0 * 1024.0))} MB"
     }
 
     // ── Shared helpers ────────────────────────────────────────────────────────
     private fun addPresets(ctx: Context, container: LinearLayout, presets: List<Pair<String,String>>,
-                           tv: TextView, scroll: ScrollView, log: BoundedStringBuilder) {
+                           tv: TextView, scroll: NestedScrollView, log: StringBuilder) {
         val hs = HorizontalScrollView(ctx).apply { isHorizontalScrollBarEnabled=false; layoutParams=LinearLayout.LayoutParams(MATCH,WRAP) }
         val row2 = row(ctx).apply { setPadding(8.dp,4.dp,8.dp,4.dp) }
         presets.forEach { (label, code) ->
@@ -697,50 +695,33 @@ class DevToolsSheet(
     }
 
     private fun addInputRow(ctx: Context, container: LinearLayout, outputTv: TextView,
-                            scroll: ScrollView, log: BoundedStringBuilder, isDeep: Boolean) {
+                            scroll: NestedScrollView, log: StringBuilder, isDeep: Boolean) {
         val inputRow = row(ctx, "#141414").apply { setPadding(8.dp,6.dp,8.dp,6.dp) }
-        val prefix = tv(ctx, "JS>", "#1D9E75", 12f).apply {
-            typeface=android.graphics.Typeface.MONOSPACE; setPadding(0,0,8.dp,0)
-        }
+        val prefix = tv(ctx, "JS>", "#1D9E75", 12f).apply { typeface=android.graphics.Typeface.MONOSPACE; setPadding(0,0,8.dp,0) }
         var histIdx = detector.consoleHistory.size
         val jsInput = editText(ctx, "Nhập JS...").apply { layoutParams=LinearLayout.LayoutParams(0,WRAP,1f); maxLines=4 }
         val btnUp = btn(ctx, "↑", "#888888").apply {
             setOnClickListener {
-                val h = detector.consoleHistory
-                if (h.isEmpty()) return@setOnClickListener
-                histIdx = (histIdx-1).coerceAtLeast(0)
-                jsInput.setText(h[histIdx]); jsInput.setSelection(jsInput.text.length)
-            }
-        }
-        val btnDown = btn(ctx, "↓", "#888888").apply {
-            setOnClickListener {
-                val h = detector.consoleHistory
-                if (h.isEmpty()) return@setOnClickListener
-                histIdx = (histIdx+1).coerceAtMost(h.size - 1)
-                jsInput.setText(h[histIdx]); jsInput.setSelection(jsInput.text.length)
+                val h = detector.consoleHistory; if (h.isEmpty()) return@setOnClickListener
+                histIdx = (histIdx-1).coerceAtLeast(0); jsInput.setText(h[histIdx]); jsInput.setSelection(jsInput.text.length)
             }
         }
         val btnRun = btn(ctx, "▶", "#1D9E75", "#FFFFFF").apply {
             setOnClickListener {
                 val code = jsInput.text.toString().trim(); if (code.isEmpty()) return@setOnClickListener
                 if (detector.consoleHistory.lastOrNull()!=code) { detector.consoleHistory.add(code); if (detector.consoleHistory.size>50) detector.consoleHistory.removeAt(0) }
-                histIdx = detector.consoleHistory.size
-                runJs(code, outputTv, scroll, log, code.take(40))
-                jsInput.setText("")
+                histIdx = detector.consoleHistory.size; runJs(code, outputTv, scroll, log, code.take(40)); jsInput.setText("")
             }
         }
         val btnClear = btn(ctx, "🗑", "#E24B4A").apply {
-            setOnClickListener {
-                log.clear(); log.append(if (isDeep) "// Deep Inject\n" else "// Console\n")
-                outputTv.text = log.toString()
-            }
+            setOnClickListener { log.clear(); log.append(if (isDeep) "// Deep Inject\n" else "// Console\n"); outputTv.text = log }
         }
-        listOf(prefix, jsInput, btnUp, btnDown, btnRun, btnClear).forEach { inputRow.addView(it) }
+        listOf(prefix, jsInput, btnUp, btnRun, btnClear).forEach { inputRow.addView(it) }
         container.addView(inputRow)
     }
 
-    private fun runJs(code: String, output: TextView, scroll: ScrollView, log: BoundedStringBuilder, label: String) {
-        log.append("\n▶ $label\n"); output.text = log.toString()
+    private fun runJs(code: String, output: TextView, scroll: NestedScrollView, log: StringBuilder, label: String) {
+        log.append("\n▶ $label\n"); output.text = log
         webView.evaluateJavascript(code) { result ->
             requireActivity().runOnUiThread {
                 val d = when {
@@ -749,219 +730,70 @@ class DevToolsSheet(
                         result.removeSurrounding("\"").replace("\\n","\n").replace("\\t","\t").replace("\\\"","\"").replace("\\\\","\\")
                     else -> result
                 }
-                log.append("$d\n"); output.text = log.toString()
+                log.append("$d\n"); output.text = log
                 scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
             }
         }
     }
 
-    private fun outputArea(ctx: Context, log: BoundedStringBuilder, color: String): Pair<ScrollView, TextView> {
+    private fun outputArea(ctx: Context, log: StringBuilder, color: String): Pair<NestedScrollView, TextView> {
         val tv2 = TextView(ctx).apply {
-            text=log.toString(); setTextColor(Color.parseColor(color))
-            textSize=11f; typeface=android.graphics.Typeface.MONOSPACE
-            setPadding(12.dp,12.dp,12.dp,12.dp); setTextIsSelectable(true)
+            text=log; setTextColor(Color.parseColor(color)); textSize=11f
+            typeface=android.graphics.Typeface.MONOSPACE; setPadding(12.dp,12.dp,12.dp,12.dp)
+            setTextIsSelectable(true)
         }
-        val sv = ScrollView(ctx).apply {
-            layoutParams=LinearLayout.LayoutParams(MATCH,0,1f)
-            setBackgroundColor(Color.parseColor("#0D0D0D")); addView(tv2)
-        }
+        val sv = nsv(ctx, "#0D0D0D").apply { addView(tv2) }
         sv.post { sv.fullScroll(View.FOCUS_DOWN) }
         return sv to tv2
     }
 
-    /**
-     * Deep UA override: navigator properties, Sec-CH-UA Client Hints,
-     * WebGL renderer, screen info, connection info.
-     * This bypasses sophisticated bot detection used by major sites.
-     */
     private fun injectUaOverride(ua: String) {
-        val isMobile  = UserAgentManager.isMobileUA(ua)
-        val isChrome  = UserAgentManager.isChromeUA(ua)
-        val major     = UserAgentManager.extractMajorVersion(ua)
-        val platform  = UserAgentManager.getPlatform(ua)
-        val vendor    = UserAgentManager.getVendor(ua)
-        val secChUa   = UserAgentManager.buildSecChUa(ua)
-        val secChUaPlatform = UserAgentManager.buildSecChUaPlatform(ua)
-        val mobileStr = if (isMobile) "?1" else "?0"
-
-        // WebGL renderer based on UA type
-        val glRenderer = when {
-            ua.contains("Windows") -> "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)"
-            ua.contains("Mac")     -> "Apple GPU"
-            ua.contains("Pixel 8") -> "Adreno (TM) 740"
-            ua.contains("Android") -> "Adreno (TM) 640"
-            else -> "ANGLE (Intel, Intel(R) UHD Graphics 630)"
+        val isMobile  = ua.contains("Mobile") || ua.contains("Android") || ua.contains("iPhone")
+        val isChrome  = ua.contains("Chrome")
+        val chromeVer = Regex("Chrome/([\\d.]+)").find(ua)?.groupValues?.get(1) ?: "124.0.0.0"
+        val major     = chromeVer.split(".").firstOrNull() ?: "124"
+        val platform  = when {
+            ua.contains("Windows") -> "Win32"
+            ua.contains("Mac")     -> "MacIntel"
+            ua.contains("Linux") || ua.contains("Android") -> "Linux ${if (isMobile) "arm" else "x86_64"}"
+            else -> "Linux x86_64"
         }
-        val glVendor = when {
-            ua.contains("Mac") -> "Apple Inc."
-            else -> "Google Inc. (Intel)"
-        }
-
-        // Screen resolution
-        val (screenW, screenH, colorDepth) = when {
-            ua.contains("Pixel 8") -> Triple(1080, 2400, 24)
-            ua.contains("iPhone")  -> Triple(1170, 2532, 24)
-            ua.contains("SMART-TV") -> Triple(1920, 1080, 24)
-            isMobile -> Triple(1080, 2400, 24)
-            else -> Triple(1920, 1080, 24)
-        }
+        val vendor = if (isChrome) "Google Inc." else ""
 
         val js = """
 (function() {
     var ua = ${ua.let { "\"${it.replace("\"", "\\\"")}\"" }};
     var platform = "$platform";
     var vendor = "$vendor";
-    var major = "$major";
-    var secChUa = $secChUa;
-    var secChUaPlatform = $secChUaPlatform;
-    var isMobile = $isMobile;
-    var mobileStr = "$mobileStr";
-    var glRenderer = "$glRenderer";
-    var glVendor = "$glVendor";
-
-    // ── 1. Override navigator properties ─────────────────────────────────────
-    var navProps = {
-        userAgent:      { get: function() { return ua; } },
-        platform:       { get: function() { return platform; } },
-        vendor:         { get: function() { return vendor; } },
-        appVersion:     { get: function() { return ua.replace('Mozilla/', ''); } },
-        appName:        { get: function() { return 'Netscape'; } },
-        productSub:     { get: function() { return '20030107'; } },
-        webdriver:      { get: function() { return false; } },
-        deviceMemory:   { get: function() { return isMobile ? 8 : 8; } },
-        hardwareConcurrency: { get: function() { return isMobile ? 8 : 8; } },
-        maxTouchPoints: { get: function() { return isMobile ? 5 : 0; } },
-        connection:     { get: function() { return { effectiveType: '4g', rtt: 50, downlink: 10, saveData: false }; } },
-        plugins:        { get: function() {
+    var props = {
+        userAgent:   { get: function() { return ua; } },
+        platform:    { get: function() { return platform; } },
+        vendor:      { get: function() { return vendor; } },
+        appVersion:  { get: function() { return ua.replace('Mozilla/', ''); } },
+        appName:     { get: function() { return 'Netscape'; } },
+        webdriver:   { get: function() { return false; } },
+        plugins:     { get: function() {
             return Object.create(PluginArray.prototype, {
-                length: { get: function() { return 5; } },
-                item:   { value: function(i) { return null; } },
-                namedItem: { value: function(n) { return null; } },
-                refresh: { value: function() {} }
-            });
-        }},
-        mimeTypes: { get: function() {
-            return Object.create(MimeTypeArray.prototype, {
-                length: { get: function() { return 2; } },
+                length: { get: function() { return 3; } },
                 item:   { value: function(i) { return null; } },
                 namedItem: { value: function(n) { return null; } }
             });
         }},
-        languages:   { get: function() { return ['vi-VN', 'vi', 'en-US', 'en']; } },
-        language:    { get: function() { return 'vi-VN'; } }
+        languages:   { get: function() { return ['vi-VN', 'vi', 'en-US', 'en']; } }
     };
-    Object.entries(navProps).forEach(function(e) {
-        try { Object.defineProperty(navigator, e[0], Object.assign({ configurable: true }, e[1])); } catch(ex) {}
-    });
-
-    // ── 2. Override toString to bypass detection ─────────────────────────────
-    try { navigator.userAgent.toString = function() { return ua; }; } catch(e) {}
-    try { navigator.appVersion.toString = function() { return ua.replace('Mozilla/', ''); }; } catch(e) {}
-
-    // ── 3. Override Sec-CH-UA Client Hints (crucial for Netflix, Disney+, etc.) ─
-    try {
-        Object.defineProperty(navigator, 'userAgentData', {
-            get: function() {
-                return {
-                    brands: [
-                        { brand: "Chromium", version: major },
-                        { brand: "Google Chrome", version: major },
-                        { brand: "Not-A.Brand", version: "99" }
-                    ],
-                    mobile: isMobile,
-                    platform: secChUaPlatform.replace(/"/g, ''),
-                    getHighEntropyValues: function(hints) {
-                        return Promise.resolve({
-                            brands: this.brands,
-                            mobile: this.mobile,
-                            platform: this.platform.replace(/"/g, ''),
-                            platformVersion: "14.0.0",
-                            architecture: isMobile ? "arm" : "x86",
-                            bitness: "64",
-                            model: isMobile ? "Pixel 8" : "",
-                            uaFullVersion: major + ".0.0.0",
-                            wow64: false
-                        });
-                    },
-                    toJSON: function() {
-                        return { brands: this.brands, mobile: this.mobile, platform: this.platform.replace(/"/g, '') };
-                    }
-                };
-            },
-            configurable: true
-        });
-    } catch(e) {}
-
-    // ── 4. Override WebGL renderer (fingerprint bypass) ──────────────────────
-    try {
-        var getParamOrig = WebGLRenderingContext.prototype.getParameter;
-        WebGLRenderingContext.prototype.getParameter = function(param) {
-            if (param === 37445) return glVendor;   // UNMASKED_VENDOR_WEBGL
-            if (param === 37446) return glRenderer;  // UNMASKED_RENDERER_WEBGL
-            return getParamOrig.call(this, param);
-        };
-        var getParamOrig2 = WebGL2RenderingContext.prototype.getParameter;
-        WebGL2RenderingContext.prototype.getParameter = function(param) {
-            if (param === 37445) return glVendor;
-            if (param === 37446) return glRenderer;
-            return getParamOrig2.call(this, param);
-        };
-    } catch(e) {}
-
-    // ── 5. Override screen properties (match UA screen resolution) ───────────
-    try {
-        var sw=$screenW, sh=$screenH, cd=$colorDepth;
-        Object.defineProperties(screen, {
-            width:           { get: function(){ return sw; }, configurable: true },
-            height:          { get: function(){ return sh; }, configurable: true },
-            availWidth:      { get: function(){ return sw; }, configurable: true },
-            availHeight:     { get: function(){ return sh - (isMobile ? 0 : 40); }, configurable: true },
-            colorDepth:      { get: function(){ return cd; }, configurable: true },
-            pixelDepth:      { get: function(){ return cd; }, configurable: true },
-            orientation:     { get: function(){ return { type: isMobile ? 'portrait-primary' : 'landscape-primary', angle: 0 }; }, configurable: true }
-        });
-    } catch(e) {}
-
-    // ── 6. Remove automation/bot traces ──────────────────────────────────────
-    ['callPhantom','_phantom','__nightmare','Buffer','domAutomation',
-     'domAutomationController','spawn','emit','awesomium','cdc_adoQpoasnfa76pfcZLmcfl_Array',
-     'cdc_adoQpoasnfa76pfcZLmcfl_Promise','cdc_adoQpoasnfa76pfcZLmcfl_Symbol'].forEach(function(k){
-        try { delete window[k]; } catch(e) {}
+    Object.entries(props).forEach(function(e) {
+        try { Object.defineProperty(navigator, e[0], e[1]); } catch(ex) {}
     });
     try { delete window.navigator.__proto__.webdriver; } catch(e) {}
-    try { delete window.document.__proto__.webdriver; } catch(e) {}
-
-    // ── 7. Fix chrome runtime ────────────────────────────────────────────────
-    if (!window.chrome) {
-        window.chrome = {};
-    }
-    if (!window.chrome.runtime) {
-        window.chrome.runtime = {
-            connect: function() {},
-            sendMessage: function() {},
-            onMessage: { addListener: function() {} },
-            id: undefined
-        };
-    }
-    if (!window.chrome.app) {
-        window.chrome.app = { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } };
-    }
-    if (!window.chrome.csi) { window.chrome.csi = function() {}; }
-    if (!window.chrome.loadTimes) { window.chrome.loadTimes = function() { return { firstPaintTime: 0, startLoadTime: 0, commitLoadTime: 0, finishDocumentLoadTime: 0, finishLoadTime: 0, requestTime: 0 }; }; }
-
-    // ── 8. Override permissions API ──────────────────────────────────────────
-    try {
-        var origQuery = Permissions.prototype.query;
-        Permissions.prototype.query = function(desc) {
-            if (desc && desc.name === 'notifications') {
-                return Promise.resolve({ state: Notification.permission });
-            }
-            return origQuery.call(this, desc);
-        };
-    } catch(e) {}
+    try { delete window.callPhantom; } catch(e) {}
+    try { delete window._phantom; } catch(e) {}
+    try { delete window.__nightmare; } catch(e) {}
+    try { delete window.Buffer; } catch(e) {}
+    try { delete window.emit; } catch(e) {}
+    try { delete window.spawn; } catch(e) {}
+    window.navigator.userAgent.toString = function() { return ua; };
 })();
 """.trimIndent()
-
         webView.evaluateJavascript(js, null)
     }
 
@@ -998,6 +830,13 @@ class DevToolsSheet(
         this.text=text; setTextColor(Color.parseColor("#888888")); textSize=13f; gravity=Gravity.CENTER
         setPadding(24.dp,48.dp,24.dp,0); layoutParams=FrameLayout.LayoutParams(MATCH,MATCH)
     }
+    /** NestedScrollView - fixes scroll conflicts in BottomSheet */
+    private fun nsv(ctx: Context, bg: String = ""): NestedScrollView = NestedScrollView(ctx).apply {
+        layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
+        isFillViewport = true
+        overScrollMode = View.OVER_SCROLL_NEVER
+        if (bg.isNotEmpty()) setBackgroundColor(Color.parseColor(bg))
+    }
     private fun tw(fn: (String)->Unit) = object:TextWatcher {
         override fun afterTextChanged(s: Editable?) { fn(s.toString()) }
         override fun beforeTextChanged(s: CharSequence?,a:Int,b:Int,c:Int){}
@@ -1019,78 +858,55 @@ class DevToolsSheet(
     companion object { const val TAG = "DevToolsSheet" }
 }
 
-// ── NetworkAdapter (Enhanced with type filtering) ────────────────────────────
+// ── NetworkAdapter ────────────────────────────────────────────────────────────
 class NetworkAdapter(
     private val allItems: List<NetworkRequest>,
     private val onClick: (NetworkRequest) -> Unit
 ) : RecyclerView.Adapter<NetworkAdapter.VH>() {
 
     private var displayed = allItems.toMutableList()
-    private var currentFilter: String? = null
-    private var searchText: String = ""
 
     fun filter(q: String) {
-        searchText = q
-        applyFilters()
-    }
-
-    fun filterByType(type: String?) {
-        currentFilter = type
-        applyFilters()
-    }
-
-    private fun applyFilters() {
-        displayed = allItems.filter { item ->
-            val matchesSearch = searchText.isBlank() || item.url.contains(searchText, true)
-            val matchesType = when {
-                currentFilter == null -> true
-                currentFilter == "stream" -> item.isStream
-                currentFilter == "api" -> item.tag == "API" || item.tag == "JSON"
-                currentFilter == "js" -> item.tag == "JS"
-                else -> true
-            }
-            matchesSearch && matchesType
-        }.toMutableList()
+        displayed = if(q.isBlank()) allItems.toMutableList()
+        else allItems.filter{it.url.contains(q,true)}.toMutableList()
         notifyDataSetChanged()
     }
 
-    inner class VH(root: View, val tvTag:TextView, val tvStatus:TextView, val tvHost:TextView, val tvPath:TextView, val tvTime:TextView): RecyclerView.ViewHolder(root)
+    inner class VH(root: View, val tvTag:TextView, val tvHost:TextView, val tvPath:TextView, val tvStatus:TextView): RecyclerView.ViewHolder(root)
 
     override fun onCreateViewHolder(parent: ViewGroup, t: Int): VH {
         val ctx = parent.context; val d=ctx.resources.displayMetrics.density; fun Int.dp()=(this*d).toInt()
-        val tvTag    = TextView(ctx).apply{textSize=9f;typeface=android.graphics.Typeface.DEFAULT_BOLD;setPadding(6.dp(),2.dp(),6.dp(),2.dp());minWidth=44.dp();gravity=Gravity.CENTER;layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{marginEnd=6.dp()}}
-        val tvStatus = TextView(ctx).apply{textSize=9f;typeface=android.graphics.Typeface.DEFAULT_BOLD;gravity=Gravity.CENTER;minWidth=32.dp();setPadding(4.dp(),2.dp(),4.dp(),2.dp());layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{marginEnd=6.dp()}}
-        val tvHost   = TextView(ctx).apply{setTextColor(Color.parseColor("#EFEFEF"));textSize=11f;typeface=android.graphics.Typeface.DEFAULT_BOLD;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END}
-        val tvPath   = TextView(ctx).apply{setTextColor(Color.parseColor("#888888"));textSize=10f;typeface=android.graphics.Typeface.MONOSPACE;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.MIDDLE}
-        val tvTime   = TextView(ctx).apply{setTextColor(Color.parseColor("#555555"));textSize=9f;typeface=android.graphics.Typeface.MONOSPACE;layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT)}
-        val info     = LinearLayout(ctx).apply{orientation=LinearLayout.VERTICAL;layoutParams=LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1f);addView(tvHost);addView(tvPath)}
-        val row      = LinearLayout(ctx).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setPadding(12.dp(),8.dp(),12.dp(),8.dp());setBackgroundColor(Color.parseColor("#1A1A1A"));addView(tvTag);addView(tvStatus);addView(info);addView(tvTime)}
-        val root     = LinearLayout(ctx).apply{orientation=LinearLayout.VERTICAL;layoutParams=ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);addView(row);addView(View(ctx).apply{setBackgroundColor(Color.parseColor("#252525"));layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,1)})}
-        return VH(root,tvTag,tvStatus,tvHost,tvPath,tvTime)
+        val tvTag  = TextView(ctx).apply{textSize=9f;typeface=android.graphics.Typeface.DEFAULT_BOLD;setPadding(6.dp(),2.dp(),6.dp(),2.dp());minWidth=52.dp();gravity=Gravity.CENTER;layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{marginEnd=8.dp()}}
+        val tvHost = TextView(ctx).apply{setTextColor(Color.parseColor("#EFEFEF"));textSize=11f;typeface=android.graphics.Typeface.DEFAULT_BOLD;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END}
+        val tvPath = TextView(ctx).apply{setTextColor(Color.parseColor("#888888"));textSize=10f;typeface=android.graphics.Typeface.MONOSPACE;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.MIDDLE}
+        val tvStatus = TextView(ctx).apply{textSize=9f;typeface=android.graphics.Typeface.DEFAULT_BOLD;setPadding(4.dp(),2.dp(),4.dp(),2.dp());layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{marginEnd=6.dp()}}
+        val info   = LinearLayout(ctx).apply{orientation=LinearLayout.VERTICAL;layoutParams=LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1f);addView(tvHost);addView(tvPath)}
+        val row    = LinearLayout(ctx).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setPadding(12.dp(),10.dp(),12.dp(),10.dp());setBackgroundColor(Color.parseColor("#1A1A1A"));addView(tvTag);addView(tvStatus);addView(info)}
+        val root   = LinearLayout(ctx).apply{orientation=LinearLayout.VERTICAL;layoutParams=ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);addView(row);addView(View(ctx).apply{setBackgroundColor(Color.parseColor("#252525"));layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,1)})}
+        return VH(root,tvTag,tvHost,tvPath,tvStatus)
     }
-
     override fun getItemCount() = displayed.size
     override fun onBindViewHolder(h: VH, pos: Int) {
         val req=displayed[pos]
         h.tvTag.text=req.tag; h.tvTag.setBackgroundColor(Color.parseColor(req.tagColor)); h.tvTag.setTextColor(Color.WHITE)
-        // Status badge
-        if (req.statusCode > 0) {
-            h.tvStatus.text = "${req.statusCode}"
-            h.tvStatus.setTextColor(Color.parseColor(
-                when {
-                    req.statusCode in 200..299 -> "#4CAF50"
-                    req.statusCode in 300..399 -> "#FF9800"
-                    req.statusCode in 400..499 -> "#F44336"
-                    req.statusCode >= 500 -> "#E24B4A"
-                    else -> "#888888"
-                }
-            ))
-        } else {
-            h.tvStatus.text = "—"
-            h.tvStatus.setTextColor(Color.parseColor("#555555"))
-        }
         h.tvHost.text=req.host; h.tvPath.text=req.path
-        h.tvTime.text = if (req.duration > 0) "${req.duration}ms" else ""
+        // Show status code
+        if (req.statusCode > 0) {
+            h.tvStatus.text="${req.statusCode}"
+            h.tvStatus.setBackgroundColor(
+                when {
+                    req.statusCode in 200..299 -> Color.parseColor("#1B5E20")
+                    req.statusCode in 300..399 -> Color.parseColor("#E65100")
+                    req.statusCode in 400..499 -> Color.parseColor("#B71C1C")
+                    else -> Color.parseColor("#7F0000")
+                }
+            )
+            h.tvStatus.setTextColor(Color.WHITE)
+        } else {
+            h.tvStatus.text="..."
+            h.tvStatus.setBackgroundColor(Color.parseColor("#37474F"))
+            h.tvStatus.setTextColor(Color.parseColor("#888888"))
+        }
         h.itemView.setOnClickListener{onClick(req)}
     }
 }

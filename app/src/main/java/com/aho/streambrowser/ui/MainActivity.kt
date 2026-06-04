@@ -3,8 +3,7 @@ package com.aho.streambrowser.ui
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.content.Intent
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
+import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
@@ -12,7 +11,6 @@ import android.view.inputmethod.InputMethodManager
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.widget.Toast
-import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
 import com.aho.streambrowser.R
@@ -30,7 +28,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var b: ActivityMainBinding
     val detector by lazy { StreamDetector(this) }
-    private val blocker by lazy { RequestBlocker(this) }
+    val blocker by lazy { RequestBlocker(this) }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -41,15 +39,6 @@ class MainActivity : AppCompatActivity() {
         setupAddressBar()
         setupButtons()
         setupDetector()
-        // Modern back press handling for API 33+
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                if (b.webView.canGoBack()) b.webView.goBack() else {
-                    isEnabled = false
-                    onBackPressedDispatcher.onBackPressed()
-                }
-            }
-        })
         b.webView.loadUrl("https://www.google.com")
     }
 
@@ -61,6 +50,7 @@ class MainActivity : AppCompatActivity() {
             domStorageEnabled                = true
             databaseEnabled                  = true
             allowFileAccess                  = false
+            // Allow mixed content so HTTP video streams can load on HTTPS pages
             mixedContentMode                 = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             mediaPlaybackRequiresUserGesture = false
             userAgentString                  = ua
@@ -69,9 +59,6 @@ class MainActivity : AppCompatActivity() {
             displayZoomControls  = false
             loadWithOverviewMode = true
             useWideViewPort      = true
-            allowFileAccessFromFileURLs   = false
-            allowUniversalAccessFromFileURLs = false
-            allowContentAccess            = false
         }
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -93,22 +80,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupAddressBar() {
-        // Enter key navigates to URL
         b.etUrl.setOnEditorActionListener { _, actionId, event ->
             val go = actionId == EditorInfo.IME_ACTION_GO ||
                      event?.keyCode == KeyEvent.KEYCODE_ENTER
             if (go) { navigateTo(b.etUrl.text.toString()); true } else false
         }
-        // When URL bar gets focus, select all text so user can easily type a new URL
-        b.etUrl.setOnFocusChangeListener { _, hasFocus ->
-            if (hasFocus) {
-                b.etUrl.selectAll()
-            }
-        }
-        // Single tap also selects all for easy editing (like Chrome browser)
-        b.etUrl.setOnClickListener {
-            b.etUrl.selectAll()
-        }
+        b.etUrl.setOnLongClickListener { showBookmarkHistory(); true }
     }
 
     private fun setupButtons() {
@@ -133,7 +110,6 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Đã bookmark", Toast.LENGTH_SHORT).show()
             }
         }
-        // Long-press bookmark shows bookmark/history list
         b.btnBookmark.setOnLongClickListener { showBookmarkHistory(); true }
 
         // Element picker FAB
@@ -144,16 +120,16 @@ class MainActivity : AppCompatActivity() {
                     b.btnPickerFloat.setImageResource(R.drawable.ic_picker)
                     b.btnPickerFloat.backgroundTintList =
                         android.content.res.ColorStateList.valueOf(
-                            getColor(R.color.picker_active))
+                            android.graphics.Color.parseColor("#E24B4A"))
                     Toast.makeText(this,
-                        getString(R.string.picker_tap_hint), Toast.LENGTH_LONG).show()
+                        "Tap vào bất kỳ element nào trên trang", Toast.LENGTH_LONG).show()
                 },
                 onDeactivated = { hidePicker() }
             )
         }
     }
 
-    /** Gọi từ DevToolsSheet khi bật picker */
+    /** Called from DevToolsSheet when picker is activated */
     fun activatePicker() {
         b.btnPickerFloat.isVisible = true
         ElementPickerManager.activate(
@@ -161,9 +137,9 @@ class MainActivity : AppCompatActivity() {
             onActivated = {
                 b.btnPickerFloat.backgroundTintList =
                     android.content.res.ColorStateList.valueOf(
-                        getColor(R.color.picker_active))
+                        android.graphics.Color.parseColor("#E24B4A"))
                 Toast.makeText(this,
-                    getString(R.string.picker_tap_hint), Toast.LENGTH_LONG).show()
+                    "Tap vào element bất kỳ trên trang", Toast.LENGTH_LONG).show()
             },
             onDeactivated = { runOnUiThread { hidePicker() } }
         )
@@ -173,7 +149,7 @@ class MainActivity : AppCompatActivity() {
         b.btnPickerFloat.isVisible = false
         b.btnPickerFloat.backgroundTintList =
             android.content.res.ColorStateList.valueOf(
-                getColor(R.color.picker_active))
+                android.graphics.Color.parseColor("#E24B4A"))
     }
 
     private fun setupDetector() {
@@ -181,18 +157,7 @@ class MainActivity : AppCompatActivity() {
         detector.onRequestAdded = { runOnUiThread { updateFab() } }
     }
 
-    private fun isNetworkAvailable(): Boolean {
-        val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(network) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-    }
-
     fun navigateTo(input: String) {
-        if (!isNetworkAvailable()) {
-            Toast.makeText(this, "Không có kết nối mạng", Toast.LENGTH_LONG).show()
-            return
-        }
         val url = when {
             input.startsWith("http://") || input.startsWith("https://") -> input
             input.contains(".") && !input.contains(" ") -> "https://$input"
@@ -217,7 +182,7 @@ class MainActivity : AppCompatActivity() {
         )
         b.btnDevTools.text = "DevTools"
         b.btnDevTools.shrink()
-        // Reset picker khi navigate trang mới
+        // Reset picker when navigating to new page
         if (ElementPickerManager.isPickerActive()) hidePicker()
     }
 
@@ -272,26 +237,19 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        b.webView.saveState(outState)
+    // Fix: Use OnBackPressedDispatcher instead of deprecated onBackPressed()
+    override fun onBackPressed() {
+        if (b.webView.canGoBack()) b.webView.goBack() else super.onBackPressed()
     }
 
-    override fun onRestoreInstanceState(savedInstanceState: Bundle) {
-        super.onRestoreInstanceState(savedInstanceState)
-        b.webView.restoreState(savedInstanceState)
-    }
     override fun onPause()   { super.onPause();   b.webView.onPause()  }
     override fun onResume()  { super.onResume();  b.webView.onResume() }
+
+    // Fix: WebView.destroy() must be called after removing from parent to avoid crash
     override fun onDestroy() {
-        b.webView.apply {
-            stopLoading()
-            // Fix: Remove JS interface before destroy to prevent crash
-            // "Java object was released" WebView crash
-            removeJavascriptInterface("SBridge")
-            (parent as? android.view.ViewGroup)?.removeView(this)
-            destroy()
-        }
+        b.webView.stopLoading()
+        (b.webView.parent as? android.view.ViewGroup)?.removeView(b.webView)
+        b.webView.destroy()
         super.onDestroy()
     }
 }

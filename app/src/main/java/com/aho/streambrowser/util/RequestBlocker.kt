@@ -7,15 +7,7 @@ class RequestBlocker(context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("stream_browser_data", Context.MODE_PRIVATE)
 
-    // Cached patterns in memory
-    @Volatile
-    private var cachedPatterns: List<String>? = null
-
-    // Cache builtinEnabled in memory to avoid SharedPreferences read on every request
-    @Volatile
-    private var builtinEnabledCache: Boolean = prefs.getBoolean("builtin_block", true)
-
-    // Built-in patterns luôn bật (ads/tracker phổ biến)
+    // Built-in ad/tracker patterns
     private val builtinPatterns = listOf(
         "doubleclick.net", "googlesyndication.com", "googletagmanager.com",
         "google-analytics.com", "facebook.com/tr", "connect.facebook.net",
@@ -24,13 +16,16 @@ class RequestBlocker(context: Context) {
         "amazon-adsystem.com", "advertising.com", "adsrvr.org", "moatads.com"
     )
 
-    // Custom patterns do user thêm
+    // Fix: Cache custom patterns to avoid reading SharedPreferences on every request
+    @Volatile
+    private var cachedCustomPatterns: List<String>? = null
+
     fun getCustomPatterns(): List<String> {
-        cachedPatterns?.let { return it }
+        cachedCustomPatterns?.let { return it }
         val raw = prefs.getString("block_patterns", "") ?: ""
-        val result = raw.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-        cachedPatterns = result
-        return result
+        val patterns = raw.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+        cachedCustomPatterns = patterns
+        return patterns
     }
 
     fun addPattern(pattern: String) {
@@ -38,25 +33,22 @@ class RequestBlocker(context: Context) {
         if (!list.contains(pattern)) {
             list.add(0, pattern)
             prefs.edit().putString("block_patterns", list.joinToString("\n")).apply()
-            cachedPatterns = list
         }
+        cachedCustomPatterns = null // Invalidate cache
     }
 
     fun removePattern(pattern: String) {
         val list = getCustomPatterns().filter { it != pattern }
         prefs.edit().putString("block_patterns", list.joinToString("\n")).apply()
-        cachedPatterns = list
+        cachedCustomPatterns = null // Invalidate cache
     }
 
-    fun isBuiltinEnabled(): Boolean = builtinEnabledCache
-    fun setBuiltinEnabled(v: Boolean) {
-        builtinEnabledCache = v
-        prefs.edit().putBoolean("builtin_block", v).apply()
-    }
+    fun isBuiltinEnabled(): Boolean = prefs.getBoolean("builtin_block", true)
+    fun setBuiltinEnabled(v: Boolean) = prefs.edit().putBoolean("builtin_block", v).apply()
 
     fun shouldBlock(url: String): Boolean {
         val lower = url.lowercase()
-        if (builtinEnabledCache && builtinPatterns.any { lower.contains(it) }) return true
+        if (isBuiltinEnabled() && builtinPatterns.any { lower.contains(it) }) return true
         return getCustomPatterns().any { lower.contains(it.lowercase()) }
     }
 

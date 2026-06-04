@@ -11,6 +11,9 @@ object CurlExporter {
         req.headers.forEach { (k, v) ->
             sb.append(" \\\n  -H '${k}: ${v.replace("'", "\\'")}'")
         }
+        if (req.requestBody.isNotEmpty()) {
+            sb.append(" \\\n  --data-raw '${req.requestBody.replace("'", "\\'")}'")
+        }
         return sb.toString()
     }
 }
