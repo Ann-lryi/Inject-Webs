@@ -525,7 +525,7 @@ class DevToolsSheet(
 
         val rv = RecyclerView(ctx).apply {
             layoutManager = LinearLayoutManager(ctx)
-            layoutParams = FrameLayout.LayoutParams(MATCH, 0, 1f)
+            layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
             isNestedScrollingEnabled = false
             overScrollMode = View.OVER_SCROLL_NEVER
         }
