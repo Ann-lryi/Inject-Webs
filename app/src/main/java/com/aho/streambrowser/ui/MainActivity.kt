@@ -20,12 +20,15 @@ import com.aho.streambrowser.detector.StreamDetector
 import com.aho.streambrowser.detector.StreamJsBridge
 import com.aho.streambrowser.model.StreamItem
 import com.aho.streambrowser.util.BookmarkManager
+import com.aho.streambrowser.util.Constants
 import com.aho.streambrowser.util.RequestBlocker
 import com.aho.streambrowser.util.UserAgentManager
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var b: ActivityMainBinding
+    private var webViewClient: BrowserWebViewClient? = null
+    
     val detector by lazy { StreamDetector(this) }
     private val blocker by lazy { RequestBlocker(this) }
 
@@ -38,7 +41,9 @@ class MainActivity : AppCompatActivity() {
         setupAddressBar()
         setupButtons()
         setupDetector()
-        b.webView.loadUrl("https://www.google.com")
+        
+        // Load default page
+        b.webView.loadUrl(Constants.DEFAULT_HOME_URL)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -57,6 +62,8 @@ class MainActivity : AppCompatActivity() {
             displayZoomControls  = false
             loadWithOverviewMode = true
             useWideViewPort      = true
+            // Enable caching for better performance
+            cacheMode = WebSettings.LOAD_DEFAULT
         }
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -65,12 +72,15 @@ class MainActivity : AppCompatActivity() {
         b.webView.addJavascriptInterface(
             StreamJsBridge(detector) { b.webView.url ?: "" }, "SBridge"
         )
-        b.webView.webViewClient = BrowserWebViewClient(
+        
+        webViewClient = BrowserWebViewClient(
             detector       = detector,
             blocker        = blocker,
             onPageStarted  = { url, _ -> runOnUiThread { pageStarted(url) } },
             onPageFinished = { url    -> runOnUiThread { pageFinished(url) } }
         )
+        b.webView.webViewClient = webViewClient!!
+        
         b.webView.webChromeClient = BrowserChromeClient(
             onProgressChanged = { p -> runOnUiThread { updateProgress(p) } },
             onTitleReceived   = { _ -> }
@@ -83,15 +93,14 @@ class MainActivity : AppCompatActivity() {
                      event?.keyCode == KeyEvent.KEYCODE_ENTER
             if (go) { navigateTo(b.etUrl.text.toString()); true } else false
         }
-        // Do NOT set onLongClickListener on URL bar - allow default text selection (copy/paste/select all)
-        // Bookmark button long-press still opens bookmark/history
+        // Allow default text selection (copy/paste/select all)
     }
 
     private fun setupButtons() {
         b.btnBack.setOnClickListener    { if (b.webView.canGoBack())    b.webView.goBack()    }
         b.btnForward.setOnClickListener { if (b.webView.canGoForward()) b.webView.goForward() }
         b.btnRefresh.setOnClickListener { b.webView.reload() }
-        b.btnHome.setOnClickListener    { b.webView.loadUrl("https://www.google.com") }
+        b.btnHome.setOnClickListener    { b.webView.loadUrl(Constants.DEFAULT_HOME_URL) }
         b.btnDevTools.setOnClickListener { openDevTools() }
 
         // Bookmark toggle
@@ -239,7 +248,32 @@ class MainActivity : AppCompatActivity() {
     override fun onBackPressed() {
         if (b.webView.canGoBack()) b.webView.goBack() else super.onBackPressed()
     }
-    override fun onPause()   { super.onPause();   b.webView.onPause()  }
-    override fun onResume()  { super.onResume();  b.webView.onResume() }
-    override fun onDestroy() { b.webView.destroy(); super.onDestroy()  }
+    
+    override fun onPause() { 
+        super.onPause()  
+        b.webView.onPause() 
+    }
+    
+    override fun onResume() { 
+        super.onResume()  
+        b.webView.onResume() 
+    }
+    
+    override fun onDestroy() { 
+        // Cleanup WebViewClient
+        webViewClient?.cleanup()
+        webViewClient = null
+        
+        // Destroy WebView
+        b.webView.apply {
+            stopLoading()
+            clearHistory()
+            clearCache(true)
+            loadUrl("about:blank")
+            removeAllViews()
+            destroy()
+        }
+        
+        super.onDestroy()
+    }
 }
