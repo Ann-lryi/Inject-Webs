@@ -38,7 +38,7 @@ class DevToolsSheet(
     override fun onCreateView(i: LayoutInflater, c: ViewGroup?, s: Bundle?) = buildRoot()
     override fun onDestroyView() { super.onDestroyView(); scope.cancel() }
 
-    // ── Fix: Configure bottom sheet to take ~65% of screen, not full screen ──
+    // ── Fix: Configure bottom sheet to take ~60% of screen, not full screen ──
     override fun onCreateDialog(savedInstanceState: Bundle?) = super.onCreateDialog(savedInstanceState).also { dialog ->
         dialog.setOnShowListener { dlg ->
             val bottomSheet = (dlg as? BottomSheetDialog)?.findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)
@@ -46,11 +46,13 @@ class DevToolsSheet(
                 val behavior = BottomSheetBehavior.from(it)
                 behavior.state = BottomSheetBehavior.STATE_EXPANDED
                 behavior.skipCollapsed = true
-                // Bottom sheet takes ~65% of screen height
+                // Bottom sheet takes ~60% of screen height
                 val displayMetrics = resources.displayMetrics
-                val sheetHeight = (displayMetrics.heightPixels * 0.65).toInt()
+                val sheetHeight = (displayMetrics.heightPixels * 0.60).toInt()
                 it.layoutParams = it.layoutParams.apply { height = sheetHeight }
                 behavior.peekHeight = sheetHeight
+                // Prevent dragging to expand beyond 60%
+                behavior.expandedOffset = (displayMetrics.heightPixels * 0.40).toInt()
             }
         }
     }
@@ -348,7 +350,6 @@ class DevToolsSheet(
         }
 
         btnPicker.setOnClickListener {
-            // Đóng sheet, hiện FAB picker nổi trên trang
             dismiss()
             activity?.activatePicker()
         }
@@ -390,6 +391,7 @@ class DevToolsSheet(
 
         contentFrame.addView(container)
     }
+
     // ── 6. M3U8 Parser ───────────────────────────────────────────────────────
     private fun showM3u8Tab() {
         val ctx = requireContext()
@@ -400,7 +402,6 @@ class DevToolsSheet(
 
         val inputRow = row(ctx, "#141414").apply { setPadding(8.dp,6.dp,8.dp,6.dp) }
         val urlBox = editText(ctx, "https://example.com/master.m3u8").apply {
-            // Điền stream đầu tiên nếu có
             detector.streams.firstOrNull { it.url.contains("m3u8") }?.let { setText(it.url) }
         }
         val btnParse = btn(ctx, "Parse", "#1D9E75", "#FFFFFF")
@@ -463,7 +464,7 @@ class DevToolsSheet(
         contentFrame.addView(container)
     }
 
-    // ── 6. Blocker ───────────────────────────────────────────────────────────
+    // ── 7. Blocker ───────────────────────────────────────────────────────────
     private fun showBlockerTab() {
         val ctx = requireContext()
         val blocker = com.aho.streambrowser.util.RequestBlocker(ctx)
@@ -524,7 +525,7 @@ class DevToolsSheet(
         contentFrame.addView(container)
     }
 
-    // ── 7. User-Agent ────────────────────────────────────────────────────────
+    // ── 8. User-Agent ────────────────────────────────────────────────────────
     private fun showUaTab() {
         val ctx = requireContext()
         val container = col(ctx)
@@ -559,7 +560,6 @@ class DevToolsSheet(
                     card.setOnClickListener {
                         UserAgentManager.save(ctx, ua)
                         webView.settings.userAgentString = ua
-                        // Inject JS override navigator.userAgent để bypass site detection
                         injectUaOverride(ua)
                         Toast.makeText(ctx, "✓ UA: $name\nTrang sẽ reload để áp dụng", Toast.LENGTH_SHORT).show()
                         webView.reload()
@@ -601,10 +601,10 @@ class DevToolsSheet(
         contentFrame.addView(container)
     }
 
-    // ── 8. Saved (Bookmark + History) ────────────────────────────────────────
+    // ── 9. Saved (Bookmark + History) ────────────────────────────────────────
     private fun showSavedTab() {
         val ctx = requireContext()
-        val activity = requireActivity() as? MainActivity ?: return
+        val act = requireActivity() as? MainActivity ?: return
         val container = col(ctx)
         val bookmarks = BookmarkManager.getBookmarks(ctx)
         val history   = BookmarkManager.getHistory(ctx)
@@ -642,7 +642,7 @@ class DevToolsSheet(
                 val e = all[pos]
                 vh.tvTitle.text = (if (e.isBookmark) "★ " else "  ") + e.title
                 vh.tvUrl.text   = e.url
-                vh.root.setOnClickListener { activity.navigateTo(e.url); dismiss() }
+                vh.root.setOnClickListener { act.navigateTo(e.url); dismiss() }
                 vh.btnDel.setOnClickListener {
                     if (e.isBookmark) BookmarkManager.removeBookmark(ctx, e.url)
                     else BookmarkManager.clearHistory(ctx)
@@ -660,34 +660,136 @@ class DevToolsSheet(
         contentFrame.addView(container)
     }
 
-    // ── Request detail ─────────────────────────────────────────────────────────
+    // ── Request detail (DevTools-style with full sections) ────────────────────
     private fun showRequestDetail(req: NetworkRequest) {
         val ctx = requireContext()
-        val sv = ScrollView(ctx)
-        val tvDetail = TextView(ctx).apply {
-            text = buildString {
-                appendLine("URL:"); appendLine(req.url); appendLine()
-                appendLine("Method: ${req.method}")
-                appendLine()
-                appendLine("Headers:")
-                if (req.headers.isEmpty()) appendLine("  (none)")
-                else req.headers.forEach { (k,v) -> appendLine("  $k: $v") }
-            }
-            setTextColor(Color.parseColor("#EFEFEF"))
+        val scrollView = ScrollView(ctx).apply {
             setBackgroundColor(Color.parseColor("#0D0D0D"))
-            textSize = 11f
-            typeface = android.graphics.Typeface.MONOSPACE
-            setPadding(16.dp,16.dp,16.dp,16.dp)
-            setTextIsSelectable(true)
         }
-        sv.addView(tvDetail)
+        val content = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16.dp, 16.dp, 16.dp, 16.dp)
+        }
+
+        // ── Section: General ──
+        content.addView(sectionHeader(ctx, "📋 General"))
+        content.addView(kvRow(ctx, "Request URL", req.url))
+        content.addView(kvRow(ctx, "Request Method", req.method))
+        if (req.statusCode > 0) {
+            content.addView(kvRow(ctx, "Status Code", "${req.statusCode}"))
+        }
+        if (req.mimeType.isNotEmpty()) {
+            content.addView(kvRow(ctx, "MIME Type", req.mimeType))
+        }
+        if (req.contentLength >= 0) {
+            val sizeStr = if (req.contentLength > 1024) {
+                String.format("%.1f KB", req.contentLength / 1024.0)
+            } else {
+                "${req.contentLength} B"
+            }
+            content.addView(kvRow(ctx, "Content Length", sizeStr))
+        }
+        content.addView(sectionDivider(ctx))
+
+        // ── Section: Query Parameters (Payload) ──
+        val queryParams = req.parseQueryParams()
+        if (queryParams.isNotEmpty()) {
+            content.addView(sectionHeader(ctx, "📤 Query Parameters"))
+            queryParams.forEach { (k, v) ->
+                content.addView(kvRow(ctx, k, v))
+            }
+            content.addView(sectionDivider(ctx))
+        }
+
+        // ── Section: Request Headers ──
+        content.addView(sectionHeader(ctx, "📥 Request Headers"))
+        if (req.headers.isEmpty()) {
+            content.addView(tv(ctx, "  (none)", "#555555", 10f))
+        } else {
+            req.headers.forEach { (k, v) ->
+                content.addView(kvRow(ctx, k, v))
+            }
+        }
+        content.addView(sectionDivider(ctx))
+
+        // ── Section: Response Headers ──
+        content.addView(sectionHeader(ctx, "📤 Response Headers"))
+        if (req.responseHeaders.isEmpty()) {
+            content.addView(tv(ctx, "  ⏳ Đang tải... (mở lại để xem)", "#555555", 10f))
+        } else {
+            req.responseHeaders.forEach { (k, v) ->
+                content.addView(kvRow(ctx, k, v))
+            }
+        }
+        content.addView(sectionDivider(ctx))
+
+        // ── Section: Response Body ──
+        content.addView(sectionHeader(ctx, "📄 Response Body"))
+        if (req.responseBodyPreview.isNotEmpty()) {
+            val bodyTv = TextView(ctx).apply {
+                text = req.responseBodyPreview
+                setTextColor(Color.parseColor("#00FF41"))
+                textSize = 10f
+                typeface = android.graphics.Typeface.MONOSPACE
+                setTextIsSelectable(true)
+                setPadding(8.dp, 6.dp, 8.dp, 6.dp)
+                setBackgroundColor(Color.parseColor("#0A0A0A"))
+                layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
+            }
+            content.addView(bodyTv)
+        } else {
+            content.addView(tv(ctx, "  ⏳ Đang tải... (mở lại để xem)", "#555555", 10f))
+        }
+
+        scrollView.addView(content)
+
         AlertDialog.Builder(ctx)
-            .setTitle("Request")
-            .setView(sv)
+            .setTitle("Request Detail")
+            .setView(scrollView)
             .setPositiveButton("Copy URL")      { _,_ -> copy(req.url) }
             .setNeutralButton("Export cURL")    { _,_ -> copy(CurlExporter.toCurl(req)) }
             .setNegativeButton("Đóng", null)
             .show()
+    }
+
+    // ── Detail view helpers ──────────────────────────────────────────────────
+    private fun sectionHeader(ctx: Context, title: String): TextView {
+        return TextView(ctx).apply {
+            text = title
+            setTextColor(Color.parseColor("#1D9E75"))
+            textSize = 12f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setPadding(0, 8.dp, 0, 4.dp)
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
+        }
+    }
+
+    private fun kvRow(ctx: Context, key: String, value: String): LinearLayout {
+        return row(ctx).apply {
+            setPadding(0, 2.dp, 0, 2.dp)
+            addView(TextView(ctx).apply {
+                text = "$key: "
+                setTextColor(Color.parseColor("#888888"))
+                textSize = 10f
+                typeface = android.graphics.Typeface.MONOSPACE
+                layoutParams = LinearLayout.LayoutParams(WRAP, WRAP)
+            })
+            addView(TextView(ctx).apply {
+                text = value
+                setTextColor(Color.parseColor("#EFEFEF"))
+                textSize = 10f
+                typeface = android.graphics.Typeface.MONOSPACE
+                setTextIsSelectable(true)
+                layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
+            })
+        }
+    }
+
+    private fun sectionDivider(ctx: Context): View {
+        return View(ctx).apply {
+            setBackgroundColor(Color.parseColor("#2E2E2E"))
+            layoutParams = LinearLayout.LayoutParams(MATCH, 1).apply { topMargin = 6.dp; bottomMargin = 6.dp }
+        }
     }
 
     // ── Shared helpers ────────────────────────────────────────────────────────
@@ -791,7 +893,6 @@ class DevToolsSheet(
             else -> "Linux x86_64"
         }
         val vendor = if (isChrome) "Google Inc." else ""
-        val secUa = if (isChrome) "\"Chromium\";v=\"$major\", \"Google Chrome\";v=\"$major\", \"Not-A.Brand\";v=\"99\"" else ""
 
         val js = """
 (function() {

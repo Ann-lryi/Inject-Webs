@@ -11,6 +11,11 @@ object CurlExporter {
         req.headers.forEach { (k, v) ->
             sb.append(" \\\n  -H '${k}: ${v.replace("'", "\\'")}'")
         }
+        // Include response info as comments if available
+        if (req.statusCode > 0) {
+            sb.append("\n\n# Response: ${req.statusCode}")
+            if (req.mimeType.isNotEmpty()) sb.append(" (${req.mimeType})")
+        }
         return sb.toString()
     }
 }

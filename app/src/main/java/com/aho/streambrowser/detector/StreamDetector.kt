@@ -95,6 +95,14 @@ class StreamDetector(private val context: Context? = null) {
             addStream(StreamItem(url=url, type=streamType, source=source, referer=referer))
     }
 
+    /** Update an existing request with response data */
+    @Synchronized fun updateRequest(url: String, updated: NetworkRequest) {
+        val idx = _requests.indexOfFirst { it.url == url }
+        if (idx >= 0) {
+            _requests[idx] = updated
+        }
+    }
+
     @Synchronized private fun addRequest(req: NetworkRequest) {
         if (_requests.any { it.url == req.url }) return
         _requests.add(0, req)
