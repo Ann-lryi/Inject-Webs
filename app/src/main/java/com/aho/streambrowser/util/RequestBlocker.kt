@@ -16,10 +16,20 @@ class RequestBlocker(context: Context) {
         "amazon-adsystem.com", "advertising.com", "adsrvr.org", "moatads.com"
     )
 
+    private var customPatternsCache: List<String> = emptyList()
+
+    init {
+        reloadCache()
+    }
+
+    private fun reloadCache() {
+        val raw = prefs.getString("block_patterns", "") ?: ""
+        customPatternsCache = raw.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+    }
+
     // Custom patterns do user thêm
     fun getCustomPatterns(): List<String> {
-        val raw = prefs.getString("block_patterns", "") ?: ""
-        return raw.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+        return customPatternsCache
     }
 
     fun addPattern(pattern: String) {
@@ -27,12 +37,14 @@ class RequestBlocker(context: Context) {
         if (!list.contains(pattern)) {
             list.add(0, pattern)
             prefs.edit().putString("block_patterns", list.joinToString("\n")).apply()
+            reloadCache()
         }
     }
 
     fun removePattern(pattern: String) {
         val list = getCustomPatterns().filter { it != pattern }
         prefs.edit().putString("block_patterns", list.joinToString("\n")).apply()
+        reloadCache()
     }
 
     fun isBuiltinEnabled(): Boolean = prefs.getBoolean("builtin_block", true)
