@@ -1,5 +1,13 @@
 package com.aho.streambrowser.detector
 
+import android.content.Context
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.webkit.WebResourceRequest
+import com.aho.streambrowser.model.NetworkRequest
+import com.aho.streambrowser.model.StreamItem
+
 /**
  * Ultra-Deep JavaScript Injection for Stream Detection
  * 
@@ -1262,14 +1270,6 @@ val HOOK_JS = """
 """.trimIndent()
 
 // ── StreamDetector Kotlin Class ──────────────────────────────────────────────
-
-import android.content.Context
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.Build
-import android.webkit.WebResourceRequest
-import com.aho.streambrowser.model.NetworkRequest
-import com.aho.streambrowser.model.StreamItem
 
 class StreamDetector(private val context: Context? = null) {
     private val _streams  = mutableListOf<StreamItem>()
