@@ -17,7 +17,8 @@ data class NetworkRequest(
     val contentLength: Long = -1L,
     // ── Request payload fields ──
     val requestBody: String = "",
-    val queryParameters: Map<String, String> = emptyMap()
+    val queryParameters: Map<String, String> = emptyMap(),
+    val referer: String = ""
 ) {
     val host: String get() = runCatching { java.net.URL(url).host }.getOrElse { "" }
     val path: String get() = runCatching { java.net.URL(url).path }.getOrElse { url }
