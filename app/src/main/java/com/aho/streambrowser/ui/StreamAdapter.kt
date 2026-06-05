@@ -22,11 +22,14 @@ class StreamAdapter(
             b.tvSource.text = "via ${item.source}"
             b.tvUrl.text    = item.url
             val (bg, fg) = when (item.type) {
-                StreamType.HLS   -> Color.parseColor("#1B5E20") to Color.parseColor("#C8E6C9")
-                StreamType.MP4   -> Color.parseColor("#0D47A1") to Color.parseColor("#BBDEFB")
-                StreamType.DASH  -> Color.parseColor("#4A148C") to Color.parseColor("#E1BEE7")
-                StreamType.FLV   -> Color.parseColor("#BF360C") to Color.parseColor("#FFCCBC")
-                StreamType.OTHER -> Color.parseColor("#37474F") to Color.parseColor("#ECEFF1")
+                StreamType.HLS       -> Color.parseColor("#1B5E20") to Color.parseColor("#C8E6C9")
+                StreamType.MP4       -> Color.parseColor("#0D47A1") to Color.parseColor("#BBDEFB")
+                StreamType.DASH     -> Color.parseColor("#4A148C") to Color.parseColor("#E1BEE7")
+                StreamType.FLV      -> Color.parseColor("#BF360C") to Color.parseColor("#FFCCBC")
+                StreamType.WEBM     -> Color.parseColor("#006064") to Color.parseColor("#B2EBF2")
+                StreamType.WEBSOCKET -> Color.parseColor("#E65100") to Color.parseColor("#FFE0B2")
+                StreamType.RTMP     -> Color.parseColor("#880E4F") to Color.parseColor("#F8BBD0")
+                StreamType.OTHER    -> Color.parseColor("#37474F") to Color.parseColor("#ECEFF1")
             }
             b.tvType.setBackgroundColor(bg)
             b.tvType.setTextColor(fg)
