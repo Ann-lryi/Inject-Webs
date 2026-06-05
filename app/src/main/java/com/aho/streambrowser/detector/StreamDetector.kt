@@ -25,28 +25,30 @@ val HOOK_JS = """
     'use strict';
     
     // ═══════════════════════════════════════════════════════════════════════════
-    // CONFIGURATION
+    // CONFIGURATION - Optimized for performance
     // ═══════════════════════════════════════════════════════════════════════════
-    if (window.__sb_injected_v2) return;
-    window.__sb_injected_v2 = true;
+    if (window.__sb_injected_v3) return;
+    window.__sb_injected_v3 = true;
     
     var __sb = {
         config: {
-            maxUrls: 2000,
-            debounceMs: 50,
-            scanIntervals: [300, 800, 1500, 3000, 6000, 12000, 25000],
-            deepScanDelay: 500,
-            iframeDepth: 3,
+            maxUrls: 500,  // Reduced from 2000
+            debounceMs: 100,  // Increased for less traffic
+            scanIntervals: [1000, 5000, 15000],  // Reduced from 7 intervals
+            deepScanDelay: 300,
+            iframeDepth: 2,  // Reduced
             verbose: false,
-            logLevel: 'error' // 'debug', 'info', 'warn', 'error'
+            logLevel: 'error'
         },
         state: {
             urls: new Set(),
             streams: new Map(),
             lastReport: 0,
+            lastDeepScan: 0,
             injectedFrames: new WeakSet(),
             hookedPlayers: new WeakSet(),
-            hookedAPIs: new WeakSet()
+            hookedAPIs: new WeakSet(),
+            scanCount: 0
         },
         timers: [],
         observers: [],
@@ -54,16 +56,93 @@ val HOOK_JS = """
     };
     
     // ═══════════════════════════════════════════════════════════════════════════
+    // ANTI-FINGERPRINTING - Defeat bot detection
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    function applyAntiFingerprint() {
+        try {
+            // 1. Canvas fingerprint spoofing
+            var origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+            HTMLCanvasElement.prototype.toDataURL = function() {
+                var ctx = this.getContext('2d');
+                if (ctx) {
+                    ctx.fillStyle = 'rgb(128,128,128)';
+                    ctx.fillRect(0, 0, this.width, this.height);
+                }
+                return origToDataURL.apply(this, arguments);
+            };
+            
+            // 2. WebGL fingerprint spoofing
+            var getParameter = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(param) {
+                // Spoof common fingerprinting params
+                if (param === 37445) return 'Intel Inc.';  // VENDOR
+                if (param === 37446) return 'Intel Iris OpenGL Engine';  // RENDERER
+                return getParameter.apply(this, arguments);
+            };
+            
+            // 3. Navigator spoofing
+            Object.defineProperties(navigator, {
+                'webdriver': { get: function() { return false; }, configurable: true },
+                'plugins': { get: function() { return [
+                    { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' },
+                    { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
+                    { name: 'Native Client', filename: 'internal-nacl-plugin' }
+                ]; }, configurable: true },
+                'languages': { get: function() { return ['en-US', 'en', 'vi-VN']; }, configurable: true },
+                'platform': { get: function() { return 'Win32'; }, configurable: true },
+                'oscpu': { get: function() { return 'Windows NT 10.0'; }, configurable: true },
+                'hardwareConcurrency': { get: function() { return 8; }, configurable: true },
+                'deviceMemory': { get: function() { return 8; }, configurable: true },
+                'maxTouchPoints': { get: function() { return 0; }, configurable: true }
+            });
+            
+            // 4. Screen spoofing
+            Object.defineProperties(screen, {
+                'width': { get: function() { return 1920; } },
+                'height': { get: function() { return 1080; } },
+                'availWidth': { get: function() { return 1920; } },
+                'availHeight': { get: function() { return 1040; } },
+                'colorDepth': { get: function() { return 24; } },
+                'pixelDepth': { get: function() { return 24; } }
+            });
+            
+            // 5. Timezone spoofing
+            Intl.DateTimeFormat.prototype.resolvedOptions = function() {
+                var opts = Object.getPrototypeOf(this).resolvedOptions.call(this);
+                opts.timeZone = 'America/New_York';
+                return opts;
+            };
+            Date.prototype.getTimezoneOffset = function() { return 300; };  // UTC-5
+            
+            // 6. Chrome object
+            if (!window.chrome) {
+                window.chrome = {
+                    runtime: { id: 'gcipphhpngdajcjhbddahdbodpjpljnj' },
+                    loadTimes: function() {},
+                    csi: function() {}
+                };
+            }
+            
+            // 7. Remove automation indicators
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+            
+            log('info', 'Anti-fingerprint applied');
+        } catch(e) {
+            log('warn', 'Anti-fingerprint failed', e);
+        }
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════════════
     // UTILITY FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════════════
     
     function log(level, msg, data) {
-        var levels = ['debug', 'info', 'warn', 'error'];
-        if (levels.indexOf(level) < levels.indexOf(__sb.config.logLevel)) return;
-        var prefix = '[SB:' + level.toUpperCase() + ']';
-        if (__sb.config.verbose) {
-            console[level === 'debug' ? 'log' : level](prefix, msg, data || '');
-        }
+        if (!__sb.config.verbose && level === 'debug') return;
+        if (__sb.config.logLevel === 'error' && level !== 'error') return;
+        console.log('[SB] ' + msg, data || '');
     }
     
     function normalizeUrl(url) {
@@ -382,32 +461,46 @@ val HOOK_JS = """
         });
     })();
     
-    // ── WebSocket Hook ────────────────────────────────────────────────────────
+    // ── WebSocket Hook (Enhanced) ─────────────────────────────────────────────
     (function() {
         if (__sb.state.hookedAPIs.has('ws')) return;
         __sb.state.hookedAPIs.add('ws');
         
         var OrigWS = window.WebSocket;
         window.WebSocket = function(url, protocols) {
-            log('debug', 'WebSocket opened', url);
+            log('info', 'WebSocket opened', url);
             var ws = new OrigWS(url, protocols);
             
             // Hook send
             var origSend = ws.send.bind(ws);
             ws.send = function(data) {
-                log('debug', 'WebSocket send', {url: url, data: data});
                 // Look for URLs in sent data
                 if (typeof data === 'string') {
                     extractUrls(data, 'ws_send');
+                } else if (data instanceof ArrayBuffer) {
+                    // Try to extract URLs from binary data
+                    try {
+                        var text = new TextDecoder().decode(data.slice(0, 2000));
+                        extractUrls(text, 'ws_binary_send');
+                    } catch(e) {}
                 }
                 return origSend(data);
             };
             
             // Hook message
             ws.addEventListener('message', function(e) {
-                log('debug', 'WebSocket message', {url: url, data: e.data});
                 if (typeof e.data === 'string') {
                     extractUrls(e.data, 'ws_message');
+                } else if (e.data instanceof ArrayBuffer) {
+                    // Extract URLs from binary messages (common in streaming)
+                    try {
+                        var text = new TextDecoder().decode(e.data.slice(0, 2000));
+                        extractUrls(text, 'ws_binary_message');
+                        // Look for manifest URLs
+                        if (text.includes('.m3u8') || text.includes('.mpd')) {
+                            report(url, 'ws_stream_url', 'GET');
+                        }
+                    } catch(e) {}
                 }
             });
             
@@ -817,7 +910,7 @@ val HOOK_JS = """
         __sb.timers.push(pollInterval);
     })();
     
-    // ── MediaSource API Hook ────────────────────────────────────────────────
+    // ── MediaSource API Hook (Enhanced) ──────────────────────────────────────
     (function() {
         if (__sb.state.hookedAPIs.has('mediasource')) return;
         __sb.state.hookedAPIs.add('mediasource');
@@ -826,16 +919,21 @@ val HOOK_JS = """
         if (OrigMediaSource) {
             window.MediaSource = function() {
                 var ms = new OrigMediaSource();
+                log('info', 'MediaSource created');
                 
+                // Hook addSourceBuffer
                 var origAddBuffer = ms.addSourceBuffer.bind(ms);
                 ms.addSourceBuffer = function(type) {
                     log('debug', 'MediaSource.addSourceBuffer', type);
-                    // MSE usage detected - could be adaptive streaming
+                    // Report MSE usage
                     if (type && (type.includes('mp4') || type.includes('webm') || type.includes('mpeg'))) {
-                        // This might be a streaming scenario
+                        report(location.href, 'mediasource_type:' + type, 'GET');
                     }
                     return origAddBuffer(type);
                 };
+                
+                // Hook active source buffers tracking
+                if (!ms.__sb_urls) ms.__sb_urls = new Set();
                 
                 return ms;
             };
@@ -851,24 +949,35 @@ val HOOK_JS = """
         }
     })();
     
-    // ── SourceBuffer Hook ───────────────────────────────────────────────────
+    // ── SourceBuffer Hook (Enhanced) ───────────────────────────────────────
     (function() {
         if (__sb.state.hookedAPIs.has('sourcebuffer')) return;
         __sb.state.hookedAPIs.add('sourcebuffer');
         
         var OrigSB = window.SourceBuffer;
         if (OrigSB) {
-            // Hook appendBuffer - sometimes used for streaming
-            var origAppend = OrigSB.prototype.appendBuffer;
-            if (origAppend) {
-                OrigSB.prototype.appendBuffer = function(data) {
-                    log('debug', 'SourceBuffer.appendBuffer', data ? data.byteLength : 0);
-                    return origAppend.apply(this, arguments);
+            OrigSB.prototype.appendBuffer = (function(orig) {
+                return function(data) {
+                    // Check if data looks like it contains URLs
+                    try {
+                        if (data && data.byteLength > 100) {
+                            var decoder = new TextDecoder();
+                            var text = decoder.decode(data.slice(0, 2000));
+                            // Look for URL patterns in binary data
+                            var urlMatch = text.match(/https?:\/\/[^\s"<>\\]{10,}/);
+                            if (urlMatch) {
+                                urlMatch.forEach(function(url) {
+                                    report(url, 'sourcebuffer_append', 'GET');
+                                });
+                            }
+                        }
+                    } catch(e) {}
+                    return orig.apply(this, arguments);
                 };
-            }
+            })(OrigSB.prototype.appendBuffer);
             
             __sb.hooks.push(function() {
-                if (origAppend) OrigSB.prototype.appendBuffer = origAppend;
+                if (OrigSB) OrigSB.prototype.appendBuffer = OrigSB.prototype.appendBuffer;
             });
         }
     })();
@@ -877,35 +986,29 @@ val HOOK_JS = """
     // DOM OBSERVERS
     // ═══════════════════════════════════════════════════════════════════════════
     
-    // ── MutationObserver for Dynamic Content ────────────────────────────────
+    // ── MutationObserver for Dynamic Content (Throttled) ────────────────────
     (function() {
         try {
-            var observer = new MutationObserver(function(mutations) {
-                mutations.forEach(function(mutation) {
-                    // Added nodes
+            // Throttle: collect mutations and process in batches
+            var mutationBatch = [];
+            var mutationTimer = null;
+            var MUTATION_THROTTLE = 300;  // ms
+            
+            function processMutationBatch() {
+                mutationTimer = null;
+                if (mutationBatch.length === 0) return;
+                
+                var nodesToScan = new Set();
+                mutationBatch.forEach(function(mutation) {
                     mutation.addedNodes.forEach(function(node) {
-                        if (node.nodeType !== 1) return; // Skip non-elements
-                        
-                        // Direct video/audio elements
-                        if (node.tagName === 'VIDEO' || node.tagName === 'AUDIO') {
-                            deepScanElement(node, 'mutation_direct');
+                        if (node.nodeType !== 1) return;
+                        if (node.tagName === 'VIDEO' || node.tagName === 'AUDIO' || node.tagName === 'IFRAME') {
+                            nodesToScan.add(node);
                         }
-                        
-                        // Check for player containers
+                        // Get direct children
                         try {
-                            if (node.matches && (
-                                node.matches('.video-js, .vjs-tech, .player, . Clappr, [data-player]') ||
-                                node.className && typeof node.className === 'string' && 
-                                (node.className.includes('player') || node.className.includes('video'))
-                            )) {
-                                deepScanElement(node, 'mutation_player');
-                            }
-                        } catch(e) {}
-                        
-                        // Check children
-                        try {
-                            node.querySelectorAll && node.querySelectorAll('video, audio, source, iframe, [data-video], [data-src], [data-hls], [data-m3u8], [data-mpd]').forEach(function(el) {
-                                deepScanElement(el, 'mutation_child');
+                            node.querySelectorAll && node.querySelectorAll('video, audio, source, iframe').forEach(function(el) {
+                                nodesToScan.add(el);
                             });
                         } catch(e) {}
                     });
@@ -914,10 +1017,26 @@ val HOOK_JS = """
                     if (mutation.type === 'attributes') {
                         var target = mutation.target;
                         if (target.tagName === 'VIDEO' || target.tagName === 'AUDIO') {
-                            deepScanElement(target, 'mutation_attr');
+                            nodesToScan.add(target);
                         }
                     }
                 });
+                
+                nodesToScan.forEach(function(node) {
+                    deepScanElement(node, 'mutation');
+                });
+                
+                mutationBatch = [];
+            }
+            
+            var observer = new MutationObserver(function(mutations) {
+                // Just collect, don't process immediately
+                mutationBatch.push.apply(mutationBatch, mutations);
+                
+                // Throttle processing
+                if (!mutationTimer) {
+                    mutationTimer = setTimeout(processMutationBatch, MUTATION_THROTTLE);
+                }
             });
             
             observer.observe(document.documentElement, {
@@ -1148,6 +1267,17 @@ val HOOK_JS = """
     // ═══════════════════════════════════════════════════════════════════════════
     
     function deepScan(label) {
+        // Throttle deep scans
+        var now = Date.now();
+        if (now - __sb.state.lastDeepScan < 2000) return;  // Min 2s between scans
+        __sb.state.lastDeepScan = now;
+        __sb.state.scanCount++;
+        
+        if (__sb.state.scanCount > 50) {
+            log('warn', 'Max scans reached, stopping');
+            return;  // Safety limit
+        }
+        
         log('debug', 'Deep scan: ' + label);
         
         // Re-scan all scripts (SPAs may have loaded new ones)
@@ -1256,6 +1386,13 @@ val HOOK_JS = """
     // START
     // ═══════════════════════════════════════════════════════════════════════════
     
+    // ═══════════════════════════════════════════════════════════════════════════
+    // INITIALIZATION
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    // Apply anti-fingerprinting FIRST before anything else
+    applyAntiFingerprint();
+    
     // Run initial scan after DOM ready
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initialScan);
@@ -1263,7 +1400,7 @@ val HOOK_JS = """
         setTimeout(initialScan, __sb.config.deepScanDelay);
     }
     
-    log('info', 'Ultra-Deep Injection v2 initialized');
+    log('info', 'Ultra-Deep Injection v3 initialized');
     log('debug', 'Config:', __sb.config);
     
 })();
