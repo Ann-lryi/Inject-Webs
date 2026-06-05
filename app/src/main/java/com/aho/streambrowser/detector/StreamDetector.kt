@@ -461,32 +461,46 @@ val HOOK_JS = """
         });
     })();
     
-    // ── WebSocket Hook ────────────────────────────────────────────────────────
+    // ── WebSocket Hook (Enhanced) ─────────────────────────────────────────────
     (function() {
         if (__sb.state.hookedAPIs.has('ws')) return;
         __sb.state.hookedAPIs.add('ws');
         
         var OrigWS = window.WebSocket;
         window.WebSocket = function(url, protocols) {
-            log('debug', 'WebSocket opened', url);
+            log('info', 'WebSocket opened', url);
             var ws = new OrigWS(url, protocols);
             
             // Hook send
             var origSend = ws.send.bind(ws);
             ws.send = function(data) {
-                log('debug', 'WebSocket send', {url: url, data: data});
                 // Look for URLs in sent data
                 if (typeof data === 'string') {
                     extractUrls(data, 'ws_send');
+                } else if (data instanceof ArrayBuffer) {
+                    // Try to extract URLs from binary data
+                    try {
+                        var text = new TextDecoder().decode(data.slice(0, 2000));
+                        extractUrls(text, 'ws_binary_send');
+                    } catch(e) {}
                 }
                 return origSend(data);
             };
             
             // Hook message
             ws.addEventListener('message', function(e) {
-                log('debug', 'WebSocket message', {url: url, data: e.data});
                 if (typeof e.data === 'string') {
                     extractUrls(e.data, 'ws_message');
+                } else if (e.data instanceof ArrayBuffer) {
+                    // Extract URLs from binary messages (common in streaming)
+                    try {
+                        var text = new TextDecoder().decode(e.data.slice(0, 2000));
+                        extractUrls(text, 'ws_binary_message');
+                        // Look for manifest URLs
+                        if (text.includes('.m3u8') || text.includes('.mpd')) {
+                            report(url, 'ws_stream_url', 'GET');
+                        }
+                    } catch(e) {}
                 }
             });
             
