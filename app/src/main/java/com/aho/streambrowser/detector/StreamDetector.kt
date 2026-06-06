@@ -19,7 +19,31 @@ import com.aho.streambrowser.model.StreamItem
  * - iframes and shadow DOMs
  * - Memory and prototype chains
  * - Service workers and cache
+ * 
+ * COMPATIBILITY MODE: On protected domains (Cloudflare, etc.), we use a
+ * minimal stealth approach that avoids triggering bot detection.
  */
+
+// Protected domains that use Cloudflare or similar anti-bot
+val PROTECTED_DOMAINS = listOf(
+    "streamc.xyz", "streamc.com",
+    "vidsrc", "vidsrc.in", "vidsrc.io",
+    "streamwish", "streamwish.com", "wishfast",
+    "dood", "dood.to", "doodstream",
+    "embedsr", "srsone",
+    "123movies", "123movies.is",
+    "putlocker", "putlocker.is",
+    "fmovies", "fmovies.gs",
+    "gogohd", "gogohd.net",
+    "superembed", "superembed.tv",
+    "moviehab", "moviehab.com"
+)
+
+fun isProtectedDomain(url: String): Boolean {
+    val host = url.lowercase()
+    return PROTECTED_DOMAINS.any { host.contains(it) }
+}
+
 val HOOK_JS = """
 (function() {
     'use strict';
@@ -29,6 +53,16 @@ val HOOK_JS = """
     // ═══════════════════════════════════════════════════════════════════════════
     if (window.__sb_injected_v3) return;
     window.__sb_injected_v3 = true;
+    
+    // Detect if we're on a protected domain
+    var __sb_protected = (function() {
+        var host = window.location.hostname.toLowerCase();
+        var protected = %(PROTECTED_DOMAINS)s;
+        for (var i = 0; i < protected.length; i++) {
+            if (host.indexOf(protected[i]) !== -1) return true;
+        }
+        return false;
+    })();
     
     var __sb = {
         config: {
@@ -56,11 +90,29 @@ val HOOK_JS = """
     };
     
     // ═══════════════════════════════════════════════════════════════════════════
-    // ANTI-FINGERPRINTING - Defeat bot detection
+    // ANTI-FINGERPRINTING - Defeat bot detection (MINIMAL ON PROTECTED DOMAINS)
     // ═══════════════════════════════════════════════════════════════════════════
     
     function applyAntiFingerprint() {
         try {
+            // On protected domains, be minimal - just remove automation indicators
+            if (__sb_protected) {
+                // Only remove the most obvious automation flags
+                delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+                delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+                delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+                
+                // Minimal spoofing - don't overdo it
+                Object.defineProperty(navigator, 'webdriver', { 
+                    get: function() { return false; }, 
+                    configurable: true 
+                });
+                
+                log('info', 'Stealth mode active (protected domain)');
+                return;
+            }
+            
+            // Full anti-fingerprinting for non-protected domains
             // 1. Canvas fingerprint spoofing
             var origToDataURL = HTMLCanvasElement.prototype.toDataURL;
             HTMLCanvasElement.prototype.toDataURL = function() {
@@ -1387,11 +1439,82 @@ val HOOK_JS = """
     // ═══════════════════════════════════════════════════════════════════════════
     
     // ═══════════════════════════════════════════════════════════════════════════
+    // CLOUDFLARE CHALLENGE DETECTION
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    function isCloudflareChallenge() {
+        // Check for Cloudflare challenge elements
+        var title = document.title ? document.title.toLowerCase() : '';
+        var body = document.body ? document.body.innerHTML : '';
+        
+        // Cloudflare challenge indicators
+        if (title.includes('attention required') || title.includes('cloudflare')) return true;
+        if (body.includes('cf-challenge-container') || body.includes('challenge-form')) return true;
+        if (body.includes('Checking your browser') || body.includes('One more step')) return true;
+        
+        // Check for the challenge iframe
+        var cfIframe = document.querySelector('#cf-challenge-container iframe');
+        if (cfIframe) return true;
+        
+        return false;
+    }
+    
+    // ═══════════════════════════════════════════════════════════════════════════
     // INITIALIZATION
     // ═══════════════════════════════════════════════════════════════════════════
     
+    // Check for Cloudflare challenge - if detected, do minimal injection
+    var __sb_challenge = isCloudflareChallenge();
+    
     // Apply anti-fingerprinting FIRST before anything else
     applyAntiFingerprint();
+    
+    // On challenge pages or protected domains, do minimal scan
+    if (__sb_protected || __sb_challenge) {
+        // Just wait for video elements to load - don't hook anything aggressive
+        log('info', 'Stealth mode: minimal scanning active');
+        
+        // Only observe for video/audio elements (basic detection)
+        var stealthObserver = new MutationObserver(function(mutations) {
+            mutations.forEach(function(m) {
+                m.addedNodes.forEach(function(node) {
+                    if (node.nodeType !== 1) return;
+                    if (node.tagName === 'VIDEO' || node.tagName === 'AUDIO') {
+                        if (node.src) report(node.src, 'stealth_media', 'GET');
+                    }
+                    // Check for source elements inside
+                    try {
+                        node.querySelectorAll && node.querySelectorAll('source').forEach(function(s) {
+                            if (s.src) report(s.src, 'stealth_source', 'GET');
+                        });
+                    } catch(e) {}
+                });
+            });
+        });
+        
+        stealthObserver.observe(document.documentElement, { childList: true, subtree: true });
+        __sb.observers.push(stealthObserver);
+        
+        // Still hook XHR/fetch for stream URLs (passive, less detectable)
+        if (!__sb.state.hookedAPIs.has('xhr')) {
+            __sb.state.hookedAPIs.add('xhr');
+            var XHR = XMLHttpRequest;
+            var origOpen = XHR.prototype.open;
+            var origSend = XHR.prototype.send;
+            
+            XHR.prototype.open = function(method, url) {
+                this.__sb_url = url;
+                return origOpen.apply(this, arguments);
+            };
+            XHR.prototype.send = function(body) {
+                if (this.__sb_url) report(this.__sb_url, 'stealth_xhr', 'GET');
+                return origSend.apply(this, arguments);
+            };
+        }
+        
+        log('info', 'Stealth injection initialized');
+        return; // Skip the rest
+    }
     
     // Run initial scan after DOM ready
     if (document.readyState === 'loading') {
