@@ -44,15 +44,20 @@ class DevToolsSheet(
             val bottomSheet = (dlg as? BottomSheetDialog)?.findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)
             bottomSheet?.let {
                 val behavior = BottomSheetBehavior.from(it)
-                behavior.state = BottomSheetBehavior.STATE_EXPANDED
-                behavior.skipCollapsed = true
-                // Bottom sheet takes ~60% of screen height
+                // Set to PEER at 60% height - prevents full expansion
                 val displayMetrics = resources.displayMetrics
                 val sheetHeight = (displayMetrics.heightPixels * 0.60).toInt()
-                it.layoutParams = it.layoutParams.apply { height = sheetHeight }
                 behavior.peekHeight = sheetHeight
-                // Prevent dragging to expand beyond 60%
                 behavior.expandedOffset = (displayMetrics.heightPixels * 0.40).toInt()
+                // Lock to collapsed/half-expanded only - no full expansion
+                behavior.isHideable = false
+                behavior.skipCollapsed = false
+                // Set to half-expanded state
+                behavior.state = BottomSheetBehavior.STATE_HALF_EXPANDED
+                // Set max height
+                it.layoutParams = it.layoutParams.apply {
+                    height = sheetHeight
+                }
             }
         }
     }
@@ -980,9 +985,15 @@ class DevToolsSheet(
         override fun onTextChanged(s: CharSequence?,a:Int,b:Int,c:Int){}
     }
     private fun copy(text: String) {
-        (requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-            .setPrimaryClip(ClipData.newPlainText("copied",text))
-        Toast.makeText(requireContext(),"Đã copy",Toast.LENGTH_SHORT).show()
+        try {
+            val clipboard = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            // Use ClipData with proper MIME type for long text
+            val clip = ClipData.newPlainText("StreamBrowser", text)
+            clipboard.setPrimaryClip(clip)
+            Toast.makeText(requireContext(), "Đã copy ${text.length} ký tự", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(requireContext(), "Copy thất bại: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
     private fun share(text: String) {
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply{type="text/plain";putExtra(Intent.EXTRA_TEXT,text)},"Chia sẻ"))

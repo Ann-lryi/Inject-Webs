@@ -42,8 +42,9 @@ class StreamBottomSheet(
 
     private fun copyUrl(item: StreamItem) {
         val cm = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("stream_url", item.url))
-        Toast.makeText(requireContext(), "Đã copy URL", Toast.LENGTH_SHORT).show()
+        val clip = ClipData.newPlainText("stream_url", item.url)
+        cm.setPrimaryClip(clip)
+        Toast.makeText(requireContext(), "Đã copy URL (${item.url.length} ký tự)", Toast.LENGTH_SHORT).show()
     }
 
     private fun shareUrl(item: StreamItem) {

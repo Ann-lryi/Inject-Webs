@@ -37,7 +37,7 @@
 
     </LinearLayout>
 
-    <!-- URL -->
+    <!-- URL - selectable for easy copy -->
     <TextView
         android:id="@+id/tvUrl"
         android:layout_width="match_parent"
@@ -47,6 +47,7 @@
         android:fontFamily="monospace"
         android:maxLines="3"
         android:ellipsize="middle"
+        android:textIsSelectable="true"
         android:layout_marginBottom="8dp"/>
 
     <!-- Action buttons -->

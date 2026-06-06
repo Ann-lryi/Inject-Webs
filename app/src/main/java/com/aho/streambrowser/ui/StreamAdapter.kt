@@ -1,8 +1,12 @@
 package com.aho.streambrowser.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Color
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
@@ -17,10 +21,24 @@ class StreamAdapter(
 ) : ListAdapter<StreamItem, StreamAdapter.VH>(DIFF) {
 
     inner class VH(private val b: ItemStreamBinding) : RecyclerView.ViewHolder(b.root) {
+        private fun copyToClipboard(text: String) {
+            val ctx = b.root.context
+            val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("stream_url", text))
+            Toast.makeText(ctx, "Đã copy: ${text.take(50)}...", Toast.LENGTH_SHORT).show()
+        }
+        
         fun bind(item: StreamItem) {
             b.tvType.text   = item.label
             b.tvSource.text = "via ${item.source}"
             b.tvUrl.text    = item.url
+            // Enable text selection on URL
+            b.tvUrl.setTextIsSelectable(true)
+            // Allow long-press copy anywhere in the item
+            b.root.setOnLongClickListener {
+                copyToClipboard(item.url)
+                true
+            }
             val (bg, fg) = when (item.type) {
                 StreamType.HLS       -> Color.parseColor("#1B5E20") to Color.parseColor("#C8E6C9")
                 StreamType.MP4       -> Color.parseColor("#0D47A1") to Color.parseColor("#BBDEFB")
