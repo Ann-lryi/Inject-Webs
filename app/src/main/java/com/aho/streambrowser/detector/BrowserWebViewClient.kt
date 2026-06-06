@@ -102,7 +102,14 @@ class BrowserWebViewClient(
     
     private fun injectJavaScript(view: WebView) {
         try {
-            view.evaluateJavascript(HOOK_JS) { success ->
+            // Replace protected domains placeholder with actual list (as JS array)
+            val protectedDomainsJs = PROTECTED_DOMAINS.joinToString(
+                separator = ", ",
+                prefix = "[",
+                postfix = "]"
+            ) { "\"$it\"" }
+            val jsToInject = HOOK_JS.replace("%(PROTECTED_DOMAINS)s", protectedDomainsJs)
+            view.evaluateJavascript(jsToInject) { success ->
                 if (success == "ok" || success == "true") {
                     lastInjectTime = System.currentTimeMillis()
                     injectedUrls.add(currentUrl)
