@@ -4,15 +4,19 @@ import android.os.Bundle
 import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.ui.PlayerView
 import com.aho.streambrowser.databinding.ActivityPlayerBinding
 import com.aho.streambrowser.model.StreamItem
 import com.aho.streambrowser.model.StreamType
-import com.google.android.exoplayer2.*
-import com.google.android.exoplayer2.source.hls.HlsMediaSource
-import com.google.android.exoplayer2.source.ProgressiveMediaSource
-import com.google.android.exoplayer2.trackselection.DefaultTrackSelector
-import com.google.android.exoplayer2.upstream.DefaultDataSource
-import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
 
 class PlayerActivity : AppCompatActivity() {
 
@@ -52,21 +56,18 @@ class PlayerActivity : AppCompatActivity() {
             else            -> ProgressiveMediaSource.Factory(dataFactory).createMediaSource(mediaItem)
         }
 
-        player = ExoPlayer.Builder(this)
-            .setTrackSelector(DefaultTrackSelector(this))
-            .build()
-            .also { exo ->
-                b.playerView.player = exo
-                exo.setMediaSource(mediaSource)
-                exo.prepare()
-                exo.playWhenReady = true
-                exo.addListener(object : Player.Listener {
-                    override fun onPlayerError(error: PlaybackException) {
-                        Toast.makeText(this@PlayerActivity,
-                            "Lỗi: ${error.message}", Toast.LENGTH_LONG).show()
-                    }
-                })
-            }
+        player = ExoPlayer.Builder(this).build().also { exo ->
+            b.playerView.player = exo
+            exo.setMediaSource(mediaSource)
+            exo.prepare()
+            exo.playWhenReady = true
+            exo.addListener(object : Player.Listener {
+                override fun onPlayerError(error: PlaybackException) {
+                    Toast.makeText(this@PlayerActivity,
+                        "Lỗi: ${error.message}", Toast.LENGTH_LONG).show()
+                }
+            })
+        }
     }
 
     override fun onStop()    { super.onStop();    player?.pause()   }

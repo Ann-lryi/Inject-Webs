@@ -16,258 +16,140 @@ class BrowserWebViewClient(
     private val onPageFinished: (url: String) -> Unit
 ) : WebViewClient() {
 
-    private var currentUrl = ""
+    private var currentUrl  = ""
+    private var previousUrl = ""          // FIX: track previous URL separately
     private var isDestroyed = false
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    
-    // Rate limiting for OkHttp requests
-    private val activeRequests = AtomicInteger(0)
-    private val maxConcurrentRequests = 10
-    private val requestQueue = mutableListOf<Job>()
-    
-    // Performance optimization
-    private var lastInjectTime = 0L
-    private val injectCooldown = 500L // ms between injections
-    private var injectionFailed = false
 
-    // Lightweight OkHttp client for fetching response data (separate from WebView requests)
+    private val activeRequests = AtomicInteger(0)
+    private val MAX_CONCURRENT = 8
+
     private val okHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.SECONDS)
-            .writeTimeout(5, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
-            .retryOnConnectionFailure(false) // Don't retry, it's just for preview
+            .retryOnConnectionFailure(false)
             .build()
     }
-    
-    // Cache recent successful injections
-    private val injectedUrls = mutableSetOf<String>()
+
+    private val injectedUrls   = mutableSetOf<String>()
+    private var lastInjectTime = 0L
+    private val INJECT_COOLDOWN = 300L   // ms
+
+    // ── Page lifecycle ───────────────────────────────────────────────────────
 
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
         if (isDestroyed) return
-        
         try {
-            currentUrl = url
-            
-            // Only clear if URL actually changed
-            if (url != currentUrl) {
+            previousUrl = currentUrl      // FIX: save BEFORE overwriting
+            currentUrl  = url
+
+            // FIX: compare against previousUrl, not currentUrl (was always false!)
+            if (url != previousUrl) {
                 detector.clear()
+                injectedUrls.clear()      // Reset injection tracking for new page
             }
-            
-            // Inject JS with cooldown and deduplication
-            val shouldInject = shouldInjectJs(url)
-            if (shouldInject) {
-                injectJavaScript(view)
-            }
-            
+
+            if (shouldInjectJs(url)) injectJavaScript(view)
             onPageStarted(url, favicon)
         } catch (e: Exception) {
-            // Graceful degradation
             onPageStarted(url, favicon)
         }
     }
 
     override fun onPageFinished(view: WebView, url: String) {
         if (isDestroyed) return
-        
         try {
-            // Re-inject JS on page finish for SPAs (Single Page Applications)
-            val shouldReinject = shouldInjectJs(url)
-            if (shouldReinject) {
-                injectJavaScript(view)
-            }
-            
+            // Re-inject for SPAs that finish loading without navigation
+            if (shouldInjectJs(url)) injectJavaScript(view)
             onPageFinished(url)
         } catch (e: Exception) {
-            // Graceful degradation
             onPageFinished(url)
         }
     }
-    
+
     private fun shouldInjectJs(url: String): Boolean {
         if (url.isBlank()) return false
         if (url.startsWith("about:") || url.startsWith("data:")) return false
-        
-        // Check cooldown
         val now = System.currentTimeMillis()
-        if (now - lastInjectTime < injectCooldown) return false
-        
-        // Don't re-inject for same URL
+        if (now - lastInjectTime < INJECT_COOLDOWN) return false
         if (url in injectedUrls) return false
-        
         return true
     }
-    
+
     private fun injectJavaScript(view: WebView) {
         try {
-            // Replace protected domains placeholder with actual list (as JS array)
-            val protectedDomainsJs = PROTECTED_DOMAINS.joinToString(
-                separator = ", ",
-                prefix = "[",
-                postfix = "]"
-            ) { "\"$it\"" }
-            val jsToInject = HOOK_JS.replace("%(PROTECTED_DOMAINS)s", protectedDomainsJs)
-            view.evaluateJavascript(jsToInject) { success ->
-                if (success == "ok" || success == "true") {
+            val js = HOOK_JS.replace("%(PROTECTED_DOMAINS)s",
+                PROTECTED_DOMAINS.joinToString(",", "[", "]") { "\"$it\"" })
+            view.evaluateJavascript(js) { result ->
+                if (result != "null" && result != null) {
                     lastInjectTime = System.currentTimeMillis()
                     injectedUrls.add(currentUrl)
-                    injectionFailed = false
-                    
-                    // Cleanup old injections (keep last 20)
-                    if (injectedUrls.size > 20) {
-                        injectedUrls.remove(injectedUrls.iterator().next())
-                    }
-                } else {
-                    // Log failure but don't spam retries
-                    if (!injectionFailed) {
-                        injectionFailed = true
-                    }
+                    if (injectedUrls.size > 20) injectedUrls.remove(injectedUrls.iterator().next())
                 }
             }
-        } catch (e: Exception) {
-            // Graceful degradation - JS injection is not critical
-            injectionFailed = true
-        }
+        } catch (_: Exception) {}
     }
+
+    // ── Request intercept ────────────────────────────────────────────────────
 
     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
         if (isDestroyed) return null
-        
         try {
             val url = request.url?.toString() ?: return null
-            
-            // Block ads/trackers early
-            if (blocker.shouldBlock(url)) {
-                blocker.incrementBlocked()
-                return createEmptyResponse()
-            }
-            
-            // Intercept for detection
+            if (blocker.shouldBlock(url)) { blocker.incrementBlocked(); return emptyResponse() }
             detector.interceptRequest(request, currentUrl)
-            
-            // Fetch response data with rate limiting
-            fetchResponseDataAsync(url, request.requestHeaders ?: emptyMap(), request.method ?: "GET")
-            
-            return null
-        } catch (e: Exception) {
-            // Don't block requests due to errors
-            return null
-        }
-    }
-    
-    private fun createEmptyResponse(): WebResourceResponse {
-        return WebResourceResponse("text/plain", "utf-8", null)
+            fetchResponseAsync(url, request.requestHeaders ?: emptyMap(), request.method ?: "GET")
+        } catch (_: Exception) {}
+        return null
     }
 
-    /** Make a parallel OkHttp request to capture response headers and body preview */
-    private fun fetchResponseDataAsync(url: String, reqHeaders: Map<String, String>, method: String) {
-        // Rate limiting
-        if (activeRequests.get() >= maxConcurrentRequests) {
-            return // Skip this request
-        }
-        
-        // Skip non-GET requests for preview (save bandwidth)
-        if (method.uppercase() != "GET" && method.uppercase() != "HEAD") {
-            return
-        }
-        
+    private fun emptyResponse() = WebResourceResponse("text/plain", "utf-8", null)
+
+    private fun fetchResponseAsync(url: String, headers: Map<String, String>, method: String) {
+        if (method.uppercase() !in listOf("GET", "HEAD")) return
+        if (activeRequests.get() >= MAX_CONCURRENT) return
         activeRequests.incrementAndGet()
-        
+
         scope.launch {
             try {
-                val requestBuilder = Request.Builder().url(url)
-                
-                // Copy relevant request headers (avoid duplicates that OkHttp manages)
-                val skipHeaders = setOf("host", "connection", "content-length", "accept-encoding", "transfer-encoding")
-                reqHeaders.forEach { (k, v) ->
-                    if (k.lowercase() !in skipHeaders) {
-                        requestBuilder.addHeader(k, v)
-                    }
+                val skipHdrs = setOf("host", "connection", "content-length", "accept-encoding", "transfer-encoding")
+                val rb = Request.Builder().url(url)
+                headers.forEach { (k, v) -> if (k.lowercase() !in skipHdrs) rb.addHeader(k, v) }
+                if (method.uppercase() == "HEAD") rb.head() else rb.get()
+
+                val resp = okHttpClient.newCall(rb.build()).execute()
+                val status     = resp.code
+                val resHeaders = resp.headers.toMap()
+                val mime       = resp.header("Content-Type", "") ?: ""
+                val size       = resp.header("Content-Length", "-1")?.toLongOrNull() ?: -1L
+
+                val body = try {
+                    val src = resp.body?.source() ?: run { resp.close(); return@launch }
+                    src.request(4096L)
+                    val bytes = src.readByteArray()
+                    resp.close()
+                    try { String(bytes, Charsets.UTF_8).take(4000) }
+                    catch (_: Exception) { "(${bytes.size} bytes binary)" }
+                } catch (_: Exception) { ""; }
+
+                detector.requests.find { it.url == url }?.let { old ->
+                    detector.updateRequest(url, old.withResponse(status, resHeaders, body, mime, size))
                 }
-                
-                when (method.uppercase()) {
-                    "GET" -> requestBuilder.get()
-                    "HEAD" -> requestBuilder.head()
-                    else -> requestBuilder.get()
-                }
-
-                val call = okHttpClient.newCall(requestBuilder.build())
-                val response = call.execute()
-
-                val statusCode = response.code
-                val resHeaders = response.headers.toMap()
-                val mimeType = response.header("Content-Type", "") ?: ""
-                val contentLen = response.header("Content-Length", "-1")?.toLongOrNull() ?: -1L
-
-                // Read body preview (first 4KB max)
-                val bodyPreview = try {
-                    val body = response.body
-                    if (body != null) {
-                        val source = body.source()
-                        source.request(4096L)
-                        val bytes = source.readByteArray()
-                        // Try to decode as UTF-8, fallback to hex for binary
-                        try {
-                            String(bytes, Charsets.UTF_8).take(4000)
-                        } catch (_: Exception) {
-                            "(${bytes.size} bytes binary)"
-                        }
-                    } else ""
-                } catch (_: Exception) { "" }
-
-                response.close()
-
-                // Update the request in detector with response data
-                updateRequestInDetector(url, statusCode, resHeaders, bodyPreview, mimeType, contentLen)
             } catch (_: Exception) {
-                // Silently fail - response data is best-effort
             } finally {
                 activeRequests.decrementAndGet()
             }
         }
     }
-    
-    private fun updateRequestInDetector(
-        url: String, 
-        statusCode: Int, 
-        resHeaders: Map<String, String>, 
-        bodyPreview: String, 
-        mimeType: String, 
-        contentLen: Long
-    ) {
-        try {
-            val existingReq = detector.requests.find { it.url == url }
-            if (existingReq != null) {
-                val updated = existingReq.withResponse(
-                    statusCode = statusCode,
-                    responseHeaders = resHeaders,
-                    responseBodyPreview = bodyPreview,
-                    mimeType = mimeType,
-                    contentLength = contentLen
-                )
-                detector.updateRequest(url, updated)
-            }
-        } catch (_: Exception) {
-            // Ignore update failures
-        }
-    }
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-        try {
-            val scheme = request.url.scheme ?: return true
-            return scheme !in listOf("http", "https", "about", "data", "blob")
-        } catch (e: Exception) {
-            return true
-        }
+        val scheme = request.url.scheme ?: return true
+        return scheme !in listOf("http", "https", "about", "data", "blob")
     }
 
-    override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError?) {
-        // Don't crash on errors, just log
-        // Subclasses can override for custom error handling
-    }
-    
     fun cleanup() {
         isDestroyed = true
         scope.cancel()

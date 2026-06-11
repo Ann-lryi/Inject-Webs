@@ -14,6 +14,10 @@ import android.webkit.WebView
 import android.widget.*
 import androidx.recyclerview.widget.*
 import com.aho.streambrowser.detector.StreamDetector
+import com.aho.streambrowser.detector.CryptoKeyCapture
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import com.aho.streambrowser.model.NetworkRequest
 import com.aho.streambrowser.model.StreamItem
 import com.aho.streambrowser.util.*
@@ -126,7 +130,8 @@ class DevToolsSheet(
             "📋 M3U8",
             "🚫 Blocker",
             "🔀 UA",
-            "★ Saved"
+            "★ Saved",
+            "🔐 Crypto(${detector.cryptoCount()})"
         )
         if (tabLayout.tabCount == 0) titles.forEach { tabLayout.addTab(tabLayout.newTab().setText(it)) }
         else titles.forEachIndexed { i, t -> tabLayout.getTabAt(i)?.text = t }
@@ -142,6 +147,7 @@ class DevToolsSheet(
         6 -> showBlockerTab()
         7 -> showUaTab()
         8 -> showSavedTab()
+        9 -> showCryptoTab()
         else -> {}
     }
 
@@ -748,6 +754,28 @@ class DevToolsSheet(
 
         scrollView.addView(content)
 
+        // Extra action buttons row
+        val extraRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(16.dp, 8.dp, 16.dp, 8.dp)
+            setBackgroundColor(Color.parseColor("#141414"))
+        }
+        val btnOkHttp = Button(ctx).apply {
+            text = "⚙ OkHttp"; textSize = 11f; setTextColor(Color.parseColor("#4CAF50"))
+            background = null; setPadding(10.dp, 6.dp, 10.dp, 6.dp)
+            layoutParams = LinearLayout.LayoutParams(WRAP, WRAP)
+            setOnClickListener { copy(buildOkHttpCode(req)) }
+        }
+        val btnCs3 = Button(ctx).apply {
+            text = "☁ CS3"; textSize = 11f; setTextColor(Color.parseColor("#64B5F6"))
+            background = null; setPadding(10.dp, 6.dp, 10.dp, 6.dp)
+            layoutParams = LinearLayout.LayoutParams(WRAP, WRAP)
+            visibility = if (req.isStream) View.VISIBLE else View.GONE
+            setOnClickListener { copy(buildCs3Code(req)) }
+        }
+        extraRow.addView(btnOkHttp); extraRow.addView(btnCs3)
+        content.addView(extraRow)
+
         AlertDialog.Builder(ctx)
             .setTitle("Request Detail")
             .setView(scrollView)
@@ -1002,6 +1030,197 @@ class DevToolsSheet(
     private val Int.dp  get() = (this * resources.displayMetrics.density).toInt()
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private val WRAP  = ViewGroup.LayoutParams.WRAP_CONTENT
+
+
+    // ── 🔐 Crypto Tab ────────────────────────────────────────────────────────
+    private fun showCryptoTab() {
+        val ctx = requireContext()
+        val container = col(ctx)
+        val sv = ScrollView(ctx).apply { layoutParams = FrameLayout.LayoutParams(MATCH, MATCH) }
+        val inner = col(ctx).apply { setPadding(12.dp, 8.dp, 12.dp, 16.dp) }
+        sv.addView(inner)
+        container.addView(sv)
+
+        // ── Section: Captured Keys ─────────────────────────────────────────
+        val keys = detector.cryptoKeys
+        inner.addView(sectionHeader(ctx, "🔑 Captured Keys (${keys.size})"))
+        if (keys.isEmpty()) {
+            inner.addView(tv(ctx, "Chưa có key nào. Mở trang có CryptoJS hoặc Web Crypto API.", "#888888", 12f).apply {
+                setPadding(0, 8.dp, 0, 16.dp)
+            })
+        } else {
+            keys.forEach { cap ->
+                val card = col(ctx, "#1A2A1A").apply { setPadding(10.dp,8.dp,10.dp,8.dp)
+                    layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 6.dp }
+                }
+                card.addView(tv(ctx, cap.algorithm, "#4CAF50", 10f))
+                card.addView(tv(ctx, "KEY: ${cap.key}", "#EFEFEF", 11f).apply {
+                    typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
+                })
+                if (cap.iv.isNotBlank()) card.addView(tv(ctx, "IV:  ${cap.iv}", "#90CAF9", 11f).apply {
+                    typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
+                })
+                card.addView(tv(ctx, cap.pageUrl.take(60), "#666666", 9f))
+                val btnCopy = btn(ctx, "Copy Key", "#1A2A1A", "#4CAF50").apply {
+                    setOnClickListener { copy(cap.key) }
+                }
+                card.addView(btnCopy)
+                inner.addView(card)
+            }
+        }
+
+        // ── Section: Encrypted Response Bodies ───────────────────────────
+        inner.addView(divider(ctx).apply { layoutParams = LinearLayout.LayoutParams(MATCH, 1).apply { topMargin = 12.dp; bottomMargin = 12.dp } })
+        val bodies = detector.responseBodies
+        inner.addView(sectionHeader(ctx, "🔒 Encrypted Responses (${bodies.size})"))
+        if (bodies.isEmpty()) {
+            inner.addView(tv(ctx, "Chưa có. XHR trả về hex IV:CIPHERTEXT sẽ hiện ở đây.", "#888888", 12f).apply { setPadding(0,8.dp,0,16.dp) })
+        } else {
+            bodies.take(5).forEach { rb ->
+                val card = col(ctx, "#2A1A1A").apply { setPadding(10.dp,8.dp,10.dp,8.dp)
+                    layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 6.dp }
+                }
+                card.addView(tv(ctx, rb.url.take(70), "#E57373", 10f).apply { typeface = android.graphics.Typeface.MONOSPACE })
+                card.addView(tv(ctx, "HTTP ${rb.statusCode} • ${rb.body.length} chars", "#888888", 9f))
+                card.addView(tv(ctx, rb.body.take(80) + "…", "#EFEFEF", 10f).apply {
+                    typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
+                })
+                val btnCopyBody = btn(ctx, "Copy", "#2A1A1A", "#E57373").apply { setOnClickListener { copy(rb.body) } }
+                card.addView(btnCopyBody)
+                inner.addView(card)
+            }
+        }
+
+        // ── Section: Manual AES Decrypt ───────────────────────────────────
+        inner.addView(divider(ctx).apply { layoutParams = LinearLayout.LayoutParams(MATCH, 1).apply { topMargin = 12.dp; bottomMargin = 12.dp } })
+        inner.addView(sectionHeader(ctx, "🔓 Manual AES-CBC Decrypt"))
+        inner.addView(tv(ctx, "Format: IV_HEX:CIPHERTEXT_HEX", "#666666", 10f).apply { setPadding(0,0,0,4.dp) })
+
+        val inputCipher = editText(ctx, "IV_HEX:CIPHERTEXT_HEX").apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 6.dp }
+            minLines = 2
+        }
+        val inputKey    = editText(ctx, "Key (string or hex)").apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 6.dp }
+        }
+        val tvResult    = tv(ctx, "", "#64B5F6", 11f).apply {
+            typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true); setPadding(0, 8.dp, 0, 0)
+        }
+        val btnDecrypt  = btn(ctx, "🔓 Decrypt", "#1A1A2A", "#64B5F6").apply {
+            setOnClickListener {
+                val cipher = inputCipher.text.toString().trim()
+                val key    = inputKey.text.toString().trim()
+                tvResult.text = aesDecrypt(cipher, key)
+            }
+        }
+        val btnFillLast = btn(ctx, "↓ Fill last body", "#1A1A1A").apply {
+            setOnClickListener { bodies.firstOrNull()?.let { inputCipher.setText(it.body) } }
+        }
+        val btnFillKey  = btn(ctx, "↓ Fill last key", "#1A1A1A").apply {
+            setOnClickListener { keys.firstOrNull()?.let { inputKey.setText(it.key) } }
+        }
+        val btnRow = row(ctx).apply { gravity = android.view.Gravity.START }
+        listOf(btnDecrypt, btnFillLast, btnFillKey).forEach { btnRow.addView(it) }
+
+        listOf(inputCipher, inputKey, btnRow, tvResult).forEach { inner.addView(it) }
+
+        // ── Section: Hex ↔ Base64 converter ─────────────────────────────
+        inner.addView(divider(ctx).apply { layoutParams = LinearLayout.LayoutParams(MATCH, 1).apply { topMargin = 12.dp; bottomMargin = 12.dp } })
+        inner.addView(sectionHeader(ctx, "🔄 Hex ↔ Base64"))
+        val inputConv  = editText(ctx, "Nhập hex hoặc base64...").apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 6.dp }
+        }
+        val tvConvOut  = tv(ctx, "", "#FFD54F", 11f).apply {
+            typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true); setPadding(0, 8.dp, 0, 0)
+        }
+        val btnHexToB64 = btn(ctx, "Hex→B64", "#1A1A2A", "#FFD54F").apply {
+            setOnClickListener {
+                try {
+                    val hex = inputConv.text.toString().trim().replace(" ","")
+                    val bytes = ByteArray(hex.length/2) { i -> hex.substring(i*2,i*2+2).toInt(16).toByte() }
+                    tvConvOut.text = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                } catch(e: Exception) { tvConvOut.text = "Lỗi: ${e.message}" }
+            }
+        }
+        val btnB64ToHex = btn(ctx, "B64→Hex", "#1A2A1A", "#A5D6A7").apply {
+            setOnClickListener {
+                try {
+                    val bytes = android.util.Base64.decode(inputConv.text.toString().trim(), android.util.Base64.DEFAULT)
+                    tvConvOut.text = bytes.joinToString("") { "%02x".format(it) }
+                } catch(e: Exception) { tvConvOut.text = "Lỗi: ${e.message}" }
+            }
+        }
+        val convRow = row(ctx).apply { addView(btnHexToB64); addView(btnB64ToHex) }
+        listOf(inputConv, convRow, tvConvOut).forEach { inner.addView(it) }
+
+        contentFrame.removeAllViews()
+        contentFrame.addView(container)
+    }
+
+    private fun sectionHeader(ctx: Context, text: String) = TextView(ctx).apply {
+        this.text = text; setTextColor(Color.parseColor("#EFEFEF")); textSize = 13f
+        typeface = android.graphics.Typeface.DEFAULT_BOLD; setPadding(0, 4.dp, 0, 8.dp)
+        layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
+    }
+
+    // ── AES-CBC decrypt helper ─────────────────────────────────────────────
+    private fun aesDecrypt(input: String, keyInput: String): String {
+        val parts = input.trim().split(":")
+        if (parts.size < 2) return "Format cần: IV_HEX:CIPHERTEXT_HEX"
+        val ivHex     = parts[0]
+        val cipherHex = parts.drop(1).joinToString("")
+        return try {
+            val keyBytes = if (keyInput.length in listOf(32,48,64) && keyInput.all{it in '0'..'9'||it in 'a'..'f'||it in 'A'..'F'}) {
+                hexToBytes(keyInput)
+            } else {
+                keyInput.toByteArray(Charsets.UTF_8).let { when { it.size<=16->it.copyOf(16); it.size<=24->it.copyOf(24); else->it.copyOf(32) } }
+            }
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(keyBytes,"AES"), IvParameterSpec(hexToBytes(ivHex)))
+            String(cipher.doFinal(hexToBytes(cipherHex)), Charsets.UTF_8)
+        } catch(e: Exception) { "Decrypt fail: ${e.message}" }
+    }
+
+    private fun hexToBytes(hex: String): ByteArray {
+        val h = hex.replace(":","").replace(" ","")
+        return ByteArray(h.length/2) { i -> h.substring(i*2,i*2+2).toInt(16).toByte() }
+    }
+
+    // ── OkHttp Kotlin code generator ─────────────────────────────────────
+    private fun buildOkHttpCode(req: NetworkRequest): String {
+        val sb = StringBuilder()
+        sb.appendLine("val client = OkHttpClient()")
+        sb.appendLine()
+        sb.appendLine("val request = Request.Builder()")
+        sb.appendLine("    .url("${req.url}")")
+        req.headers.forEach { (k,v) ->
+            if (k.lowercase() !in listOf("host","content-length","connection"))
+                sb.appendLine("    .addHeader("$k", "$v")")
+        }
+        sb.appendLine("    .get()")
+        sb.appendLine("    .build()")
+        sb.appendLine()
+        sb.appendLine("val response = client.newCall(request).execute()")
+        return sb.toString()
+    }
+
+    // ── CloudStream3 ExtractorLink code ──────────────────────────────────
+    private fun buildCs3Code(req: NetworkRequest): String {
+        val isM3u8 = req.url.contains(".m3u8", true)
+        val referer = req.headers["Referer"] ?: req.headers["referer"] ?: req.pageUrl
+        return """callback(newExtractorLink(
+    source  = "SOURCE_NAME",
+    name    = "SOURCE_NAME",
+    url     = "${req.url}",
+    type    = ${if (isM3u8) "ExtractorLinkType.M3U8" else "ExtractorLinkType.VIDEO"}
+) {
+    quality = Qualities.P1080.value
+    headers = mapOf(
+        "User-Agent" to "Mozilla/5.0",
+        "Referer"    to "$referer"
+    )
+})"""
+    }
 
     companion object { const val TAG = "DevToolsSheet" }
 }
