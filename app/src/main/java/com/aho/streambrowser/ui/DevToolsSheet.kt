@@ -1157,12 +1157,6 @@ class DevToolsSheet(
         contentFrame.addView(container)
     }
 
-    private fun sectionHeader(ctx: Context, text: String) = TextView(ctx).apply {
-        this.text = text; setTextColor(Color.parseColor("#EFEFEF")); textSize = 13f
-        typeface = android.graphics.Typeface.DEFAULT_BOLD; setPadding(0, 4.dp, 0, 8.dp)
-        layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
-    }
-
     // ── AES-CBC decrypt helper ─────────────────────────────────────────────
     private fun aesDecrypt(input: String, keyInput: String): String {
         val parts = input.trim().split(":")
@@ -1187,39 +1181,45 @@ class DevToolsSheet(
     }
 
     // ── OkHttp Kotlin code generator ─────────────────────────────────────
-    private fun buildOkHttpCode(req: NetworkRequest): String {
-        val sb = StringBuilder()
-        sb.appendLine("val client = OkHttpClient()")
-        sb.appendLine()
-        sb.appendLine("val request = Request.Builder()")
-        sb.appendLine("    .url("${req.url}")")
-        req.headers.forEach { (k,v) ->
-            if (k.lowercase() !in listOf("host","content-length","connection"))
-                sb.appendLine("    .addHeader("$k", "$v")")
+        private fun buildOkHttpCode(req: NetworkRequest): String {
+        val dq = '"'
+        val lines = mutableListOf(
+            "val client = OkHttpClient()",
+            "",
+            "val request = Request.Builder()"
+        )
+        lines.add("    .url(" + dq + req.url + dq + ")")
+        req.headers.forEach { (k, v) ->
+            if (k.lowercase() !in listOf("host", "content-length", "connection"))
+                lines.add("    .addHeader(" + dq + k + dq + ", " + dq + v + dq + ")")
         }
-        sb.appendLine("    .get()")
-        sb.appendLine("    .build()")
-        sb.appendLine()
-        sb.appendLine("val response = client.newCall(request).execute()")
-        return sb.toString()
+        lines.addAll(listOf(
+            "    .get()", "    .build()", "",
+            "val response = client.newCall(request).execute()"
+        ))
+        return lines.joinToString("\n")
     }
 
     // ── CloudStream3 ExtractorLink code ──────────────────────────────────
-    private fun buildCs3Code(req: NetworkRequest): String {
-        val isM3u8 = req.url.contains(".m3u8", true)
+        private fun buildCs3Code(req: NetworkRequest): String {
+        val dq = '"'
+        val isM3u8  = req.url.contains(".m3u8", true)
         val referer = req.headers["Referer"] ?: req.headers["referer"] ?: req.pageUrl
-        return """callback(newExtractorLink(
-    source  = "SOURCE_NAME",
-    name    = "SOURCE_NAME",
-    url     = "${req.url}",
-    type    = ${if (isM3u8) "ExtractorLinkType.M3U8" else "ExtractorLinkType.VIDEO"}
-) {
-    quality = Qualities.P1080.value
-    headers = mapOf(
-        "User-Agent" to "Mozilla/5.0",
-        "Referer"    to "$referer"
-    )
-})"""
+        val ltype   = if (isM3u8) "ExtractorLinkType.M3U8" else "ExtractorLinkType.VIDEO"
+        return listOf(
+            "callback(newExtractorLink(",
+            "    source = " + dq + "SOURCE_NAME" + dq + ",",
+            "    name   = " + dq + "SOURCE_NAME" + dq + ",",
+            "    url    = " + dq + req.url + dq + ",",
+            "    type   = $ltype",
+            ") {",
+            "    quality = Qualities.P1080.value",
+            "    headers = mapOf(",
+            "        " + dq + "User-Agent" + dq + " to " + dq + "Mozilla/5.0" + dq + ",",
+            "        " + dq + "Referer" + dq + " to " + dq + referer + dq,
+            "    )",
+            "})"
+        ).joinToString("\n")
     }
 
     companion object { const val TAG = "DevToolsSheet" }
