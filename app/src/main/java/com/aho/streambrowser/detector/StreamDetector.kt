@@ -18,6 +18,13 @@ data class CryptoKeyCapture(
     val timestamp: Long    = System.currentTimeMillis()
 )
 
+data class WebSocketMessage(
+    val direction: String,   // "open" | "send" | "recv"
+    val wsUrl:     String,
+    val data:      String,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
 data class ResponseBodyCapture(
     val url:         String,
     val statusCode:  Int,
@@ -572,6 +579,86 @@ val HOOK_JS = """
         setTimeout(initialScan, 200);
     }
 
+
+    // ── WebSocket Hook (B4) ───────────────────────────────────────────────────
+    // Bắt WS connections + messages — một số sites lấy stream token qua WS
+    (function() {
+        if (__sb.state.hookedAPIs.has('ws')) return;
+        __sb.state.hookedAPIs.add('ws');
+        var OrigWS = window.WebSocket;
+        if (!OrigWS) return;
+        window.WebSocket = function(url, protocols) {
+            try { SBridge.onWebSocket('open', url, ''); } catch(e) {}
+            var ws = protocols ? new OrigWS(url, protocols) : new OrigWS(url);
+            var origSend = ws.send.bind(ws);
+            ws.send = function(data) {
+                try {
+                    var str = (typeof data === 'string') ? data.substring(0, 500) : '[binary ' + (data.byteLength || 0) + 'b]';
+                    SBridge.onWebSocket('send', url, str);
+                } catch(e) {}
+                return origSend(data);
+            };
+            ws.addEventListener('message', function(e) {
+                try {
+                    var str = (typeof e.data === 'string') ? e.data : '[binary]';
+                    SBridge.onWebSocket('recv', url, str.substring(0, 800));
+                    if (str.length > 10) extractUrls(str, 'ws_recv');
+                } catch(e2) {}
+            });
+            ws.addEventListener('close', function() {
+                try { SBridge.onWebSocket('close', url, ''); } catch(e) {}
+            });
+            return ws;
+        };
+        try {
+            window.WebSocket.prototype = OrigWS.prototype;
+            window.WebSocket.CONNECTING = OrigWS.CONNECTING;
+            window.WebSocket.OPEN       = OrigWS.OPEN;
+            window.WebSocket.CLOSING    = OrigWS.CLOSING;
+            window.WebSocket.CLOSED     = OrigWS.CLOSED;
+        } catch(e) {}
+        __sb.hooks.push(function() { window.WebSocket = OrigWS; });
+    })();
+
+    // ── SPA Navigation Hook (E1+E2) ───────────────────────────────────────────
+    // Bắt history.pushState/replaceState và popstate — trigger re-inject cho SPAs
+    (function() {
+        if (__sb.state.hookedAPIs.has('history')) return;
+        __sb.state.hookedAPIs.add('history');
+        function wrap(method) {
+            var orig = history[method];
+            history[method] = function(state, title, url) {
+                var result = orig.apply(this, arguments);
+                try { if (url) SBridge.onSpaNavigation(String(url)); } catch(e) {}
+                return result;
+            };
+            return orig;
+        }
+        var origPush    = wrap('pushState');
+        var origReplace = wrap('replaceState');
+        window.addEventListener('popstate', function() {
+            try { SBridge.onSpaNavigation(location.href); } catch(e) {}
+        });
+        __sb.hooks.push(function() {
+            history.pushState    = origPush;
+            history.replaceState = origReplace;
+        });
+    })();
+
+    // ── E5: Anti-fingerprint (toString leak prevention) ───────────────────────
+    (function() {
+        try {
+            var origToString = Function.prototype.toString;
+            var patched = new WeakSet();
+            Function.prototype.toString = function() {
+                if (patched.has(this)) return 'function() { [native code] }';
+                return origToString.call(this);
+            };
+            // Mark our hooks as "native" to avoid detection
+            patched.add(Function.prototype.toString);
+        } catch(e) {}
+    })();
+
     return 'ok';
 })();
 """.trimIndent()
@@ -582,11 +669,13 @@ class StreamDetector(private val context: Context? = null) {
     private val _streams       = mutableListOf<StreamItem>()
     private val _requests      = mutableListOf<NetworkRequest>()
     private val _cryptoKeys    = mutableListOf<CryptoKeyCapture>()
+    private val _wsMessages     = mutableListOf<WebSocketMessage>()
     private val _responseBodies = mutableListOf<ResponseBodyCapture>()
 
     val streams:        List<StreamItem>          get() = synchronized(this) { _streams.toList()        }
     val requests:       List<NetworkRequest>      get() = synchronized(this) { _requests.toList()       }
     val cryptoKeys:     List<CryptoKeyCapture>    get() = synchronized(this) { _cryptoKeys.toList()     }
+    val wsMessages:     List<WebSocketMessage>      get() = synchronized(this) { _wsMessages.toList()      }
     val responseBodies: List<ResponseBodyCapture> get() = synchronized(this) { _responseBodies.toList() }
 
     var onStreamFound:  ((StreamItem)     -> Unit)? = null
@@ -616,6 +705,40 @@ class StreamDetector(private val context: Context? = null) {
         addRequest(req)
         if (streamType != null)
             addStream(StreamItem(url=url, type=streamType, source=source, referer=referer))
+    }
+
+    /** B4: Add WebSocket message */
+    fun addWebSocketMessage(msg: WebSocketMessage) {
+        synchronized(this) {
+            _wsMessages.add(0, msg)
+            if (_wsMessages.size > 200) _wsMessages.removeAt(_wsMessages.lastIndex)
+        }
+    }
+
+    /** A5: Get stream capture timestamp */
+    fun getStreamAge(url: String): Long {
+        val stream = synchronized(this) { _streams.find { it.url == url } }
+        return stream?.let { System.currentTimeMillis() - it.foundAt } ?: -1L
+    }
+
+    /** E1+E2: SPA navigation — trigger JS re-inject signal */
+    var onSpaNavigation: ((String) -> Unit)? = null
+    fun onSpaNavigate(url: String) {
+        onSpaNavigation?.invoke(url)
+    }
+
+    /** Scan arbitrary text for stream URLs (used for WS messages, response bodies) */
+    fun scanTextForStreams(text: String, source: String, pageUrl: String) {
+        val patterns = listOf(
+            Regex("""(https?://[^\s"'<>]+\.m3u[89][^\s"'<>]*)"""),
+            Regex("""(https?://[^\s"'<>]+\.mpd[^\s"'<>]*)"""),
+            Regex("""(https?://[^\s"'<>]+\.mp4[^\s"'<>]*)""")
+        )
+        patterns.forEach { pat ->
+            pat.findAll(text).forEach { m ->
+                reportFromJs(m.groupValues[1], source, "GET", pageUrl)
+            }
+        }
     }
 
     fun addCryptoKey(capture: CryptoKeyCapture) {
@@ -658,9 +781,11 @@ class StreamDetector(private val context: Context? = null) {
     fun clear() = synchronized(this) {
         _streams.clear(); _requests.clear()
         _cryptoKeys.clear(); _responseBodies.clear()
+        _wsMessages.clear()
     }
     fun streamCount()  = synchronized(this) { _streams.size  }
     fun requestCount() = synchronized(this) { _requests.size }
+    fun wsCount()      = synchronized(this) { _wsMessages.size }
     fun cryptoCount()  = synchronized(this) { _cryptoKeys.size }
 
     private fun vibrate() {

@@ -150,6 +150,16 @@ class BrowserWebViewClient(
         return scheme !in listOf("http", "https", "about", "data", "blob")
     }
 
+    /** E1: Force re-inject JS (called on SPA navigation) */
+    fun forceReInject(view: android.webkit.WebView) {
+        lastInjectTime = 0L
+        val url = currentUrl
+        if (url.isNotBlank() && !url.startsWith("about:")) {
+            injectedUrls.remove(url)
+            injectJavaScript(view)
+        }
+    }
+
     fun cleanup() {
         isDestroyed = true
         scope.cancel()

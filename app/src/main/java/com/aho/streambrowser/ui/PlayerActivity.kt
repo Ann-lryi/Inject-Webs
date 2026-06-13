@@ -1,6 +1,9 @@
 package com.aho.streambrowser.ui
 
+import android.app.PictureInPictureParams
+import android.os.Build
 import android.os.Bundle
+import android.util.Rational
 import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -11,9 +14,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
-import androidx.media3.ui.PlayerView
 import com.aho.streambrowser.databinding.ActivityPlayerBinding
 import com.aho.streambrowser.model.StreamItem
 import com.aho.streambrowser.model.StreamType
@@ -22,6 +23,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private lateinit var b: ActivityPlayerBinding
     private var player: ExoPlayer? = null
+    private var inPip = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,20 +39,18 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun initPlayer(stream: StreamItem) {
         val origin = runCatching {
-            val u = java.net.URL(stream.referer)
-            "${u.protocol}://${u.host}"
+            val u = java.net.URL(stream.referer); "${u.protocol}://${u.host}"
         }.getOrElse { "" }
 
         val httpFactory = DefaultHttpDataSource.Factory().apply {
             setDefaultRequestProperties(mapOf(
-                "User-Agent" to "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+                "User-Agent" to "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36",
                 "Referer"    to stream.referer,
                 "Origin"     to origin
             ))
         }
         val dataFactory = DefaultDataSource.Factory(this, httpFactory)
-
-        val mediaItem = MediaItem.fromUri(stream.url)
+        val mediaItem   = MediaItem.fromUri(stream.url)
         val mediaSource = when (stream.type) {
             StreamType.HLS  -> HlsMediaSource.Factory(dataFactory).createMediaSource(mediaItem)
             else            -> ProgressiveMediaSource.Factory(dataFactory).createMediaSource(mediaItem)
@@ -63,27 +63,52 @@ class PlayerActivity : AppCompatActivity() {
             exo.playWhenReady = true
             exo.addListener(object : Player.Listener {
                 override fun onPlayerError(error: PlaybackException) {
-                    Toast.makeText(this@PlayerActivity,
-                        "Lỗi: ${error.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@PlayerActivity, "Lỗi: ${error.message}", Toast.LENGTH_LONG).show()
+                }
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    // Update PiP actions if needed
                 }
             })
         }
     }
 
-    override fun onStop()    { super.onStop();    player?.pause()   }
-    override fun onDestroy() { player?.release(); player = null; super.onDestroy() }
+    // ── F7: PiP support ────────────────────────────────────────────────────────
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        enterPipMode()
+    }
+
+    private fun enterPipMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching {
+                enterPictureInPictureMode(
+                    PictureInPictureParams.Builder()
+                        .setAspectRatio(Rational(16, 9))
+                        .build()
+                )
+                inPip = true
+            }
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode)
+        inPip = isInPictureInPictureMode
+        b.playerView.useController = !isInPictureInPictureMode
+    }
 
     @Suppress("DEPRECATION")
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) window.decorView.systemUiVisibility = (
+        if (hasFocus && !inPip) window.decorView.systemUiVisibility = (
             View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
             View.SYSTEM_UI_FLAG_HIDE_NAVIGATION  or
             View.SYSTEM_UI_FLAG_FULLSCREEN
         )
     }
 
-    companion object {
-        const val EXTRA_STREAM = "extra_stream"
-    }
+    override fun onStop()    { super.onStop();    if (!inPip) player?.pause() }
+    override fun onDestroy() { player?.release(); player = null; super.onDestroy() }
+
+    companion object { const val EXTRA_STREAM = "extra_stream" }
 }

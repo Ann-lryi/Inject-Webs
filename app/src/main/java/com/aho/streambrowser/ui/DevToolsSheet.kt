@@ -15,6 +15,12 @@ import android.widget.*
 import androidx.recyclerview.widget.*
 import com.aho.streambrowser.detector.StreamDetector
 import com.aho.streambrowser.detector.CryptoKeyCapture
+import com.aho.streambrowser.detector.WebSocketMessage
+import com.aho.streambrowser.util.CookieExporter
+import com.aho.streambrowser.util.JwtDecoder
+import com.aho.streambrowser.util.M3u8QualityParser
+import com.aho.streambrowser.util.PluginGenerator
+import kotlinx.coroutines.launch
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -147,7 +153,10 @@ class DevToolsSheet(
         6 -> showBlockerTab()
         7 -> showUaTab()
         8 -> showSavedTab()
-        9 -> showCryptoTab()
+        9  -> showCryptoTab()
+        10 -> showWsTab()
+        11 -> showCookieTab()
+        12 -> showPluginTab()
         else -> {}
     }
 
@@ -1220,6 +1229,252 @@ class DevToolsSheet(
             "    )",
             "})"
         ).joinToString("\n")
+    }
+
+
+    // ── 🔌 WebSocket Tab ─────────────────────────────────────────────────────
+    private fun showWsTab() {
+        val ctx = requireContext()
+        val inner = col(ctx).apply { setPadding(12.dp, 8.dp, 12.dp, 16.dp) }
+        val sv = android.widget.ScrollView(ctx).apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(MATCH, MATCH)
+            addView(inner)
+        }
+        val msgs = detector.wsMessages
+        inner.addView(sectionHeader(ctx, "WebSocket Messages (${msgs.size})"))
+        if (msgs.isEmpty()) {
+            inner.addView(tv(ctx, "Chưa có WS message. Mở trang dùng WebSocket API.", "#888", 12f)
+                .apply { setPadding(0, 8.dp, 0, 0) })
+        } else {
+            msgs.take(50).forEach { msg ->
+                val bg = when(msg.direction) {
+                    "open"  -> "#1A2A1A"; "send" -> "#2A1A1A"; "recv" -> "#1A1A2A"; else -> "#1A1A1A"
+                }
+                val icon = when(msg.direction) { "open"->"🟢"; "send"->"↑"; "recv"->"↓"; else->"✖" }
+                val card = col(ctx, bg).apply {
+                    setPadding(8.dp, 6.dp, 8.dp, 6.dp)
+                    layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 4.dp }
+                }
+                card.addView(tv(ctx, "$icon ${msg.wsUrl.take(60)}", "#EFEFEF", 10f).apply {
+                    typeface = android.graphics.Typeface.MONOSPACE })
+                if (msg.data.isNotBlank()) {
+                    card.addView(tv(ctx, msg.data.take(200), "#AAAAAA", 10f).apply {
+                        typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
+                    })
+                }
+                card.addView(btn(ctx, "Copy", bg).apply { setOnClickListener { copy(msg.data) } })
+                inner.addView(card)
+            }
+        }
+        contentFrame.removeAllViews()
+        val container = col(ctx)
+        container.addView(sv)
+        contentFrame.addView(container)
+    }
+
+    // ── 🍪 Cookie Tab ────────────────────────────────────────────────────────
+    private fun showCookieTab() {
+        val ctx = requireContext()
+        val inner = col(ctx).apply { setPadding(12.dp, 8.dp, 12.dp, 16.dp) }
+        val sv = android.widget.ScrollView(ctx).apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(MATCH, MATCH)
+            addView(inner)
+        }
+        val url = webView.url ?: ""
+        val raw = CookieExporter.getRaw(url)
+
+        inner.addView(sectionHeader(ctx, "Cookies — ${url.take(50)}"))
+        if (raw.isBlank()) {
+            inner.addView(tv(ctx, "Không có cookie cho URL này.", "#888", 12f))
+        } else {
+            val parsed = CookieExporter.parse(raw)
+            parsed.forEach { (k, v) ->
+                val rowLayout = row(ctx, "#141414").apply {
+                    setPadding(8.dp, 6.dp, 8.dp, 6.dp)
+                    layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 3.dp }
+                }
+                val isJwt = JwtDecoder.isJwt(v)
+                val keyTv  = tv(ctx, k, if (isJwt) "#FFD54F" else "#64B5F6", 11f).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
+                    typeface = android.graphics.Typeface.MONOSPACE
+                }
+                val valTv  = tv(ctx, v.take(40) + if (v.length > 40) "…" else "", "#EFEFEF", 10f).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, WRAP, 2f)
+                    typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
+                }
+                rowLayout.addView(keyTv); rowLayout.addView(valTv)
+                inner.addView(rowLayout)
+
+                // If JWT, add decode button
+                if (isJwt) {
+                    inner.addView(btn(ctx, "🔍 Decode JWT: $k", "#1A2A2A", "#FFD54F").apply {
+                        setOnClickListener {
+                            val info = JwtDecoder.decode(v)
+                            if (info != null) showJwtDialog(info) else Toast.makeText(ctx,"Parse fail",Toast.LENGTH_SHORT).show()
+                        }
+                    })
+                }
+            }
+        }
+
+        inner.addView(divider(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH, 1).apply { topMargin = 12.dp; bottomMargin = 12.dp }
+        })
+        inner.addView(sectionHeader(ctx, "Export"))
+        val exports = listOf(
+            "Cookie raw"   to CookieExporter.toDocument(url),
+            "curl -b"      to CookieExporter.toCurlFlag(url),
+            "Kotlin Map"   to CookieExporter.toKotlinMap(url),
+            "Header line"  to CookieExporter.toHeaderLine(url)
+        )
+        exports.forEach { (label, value) ->
+            inner.addView(btn(ctx, "Copy $label", "#1A1A1A").apply {
+                setOnClickListener { copy(value); Toast.makeText(ctx,"$label copied",Toast.LENGTH_SHORT).show() }
+            })
+        }
+
+        contentFrame.removeAllViews()
+        contentFrame.addView(sv)
+    }
+
+    private fun showJwtDialog(info: JwtDecoder.JwtInfo) {
+        val ctx = requireContext()
+        val sv  = android.widget.ScrollView(ctx)
+        val col = col(ctx).apply { setPadding(16.dp, 8.dp, 16.dp, 16.dp) }
+        col.addView(tv(ctx, "Header:", "#64B5F6", 11f))
+        col.addView(tv(ctx, info.header, "#EFEFEF", 10f).apply {
+            typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
+        })
+        col.addView(tv(ctx, "Payload:", "#64B5F6", 11f).apply { setPadding(0, 8.dp, 0, 0) })
+        col.addView(tv(ctx, info.payload, "#EFEFEF", 10f).apply {
+            typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
+        })
+        val expColor = if (info.isExpired) "#E57373" else "#4CAF50"
+        col.addView(tv(ctx, "Exp: ${info.expTime} ${if (info.isExpired) "⚠ EXPIRED" else "✓ valid"}", expColor, 11f)
+            .apply { setPadding(0, 8.dp, 0, 0) })
+        if (info.subject.isNotBlank()) col.addView(tv(ctx, "sub: ${info.subject}", "#888", 10f))
+        if (info.issuer.isNotBlank())  col.addView(tv(ctx, "iss: ${info.issuer}",  "#888", 10f))
+        sv.addView(col)
+        AlertDialog.Builder(ctx).setTitle("JWT Decoded").setView(sv)
+            .setPositiveButton("Copy Payload") { _,_ -> copy(info.payload) }
+            .setNegativeButton("Đóng", null).show()
+    }
+
+    // ── ☁ Plugin Generator Tab ────────────────────────────────────────────────
+    private fun showPluginTab() {
+        val ctx = requireContext()
+        val inner = col(ctx).apply { setPadding(12.dp, 8.dp, 12.dp, 16.dp) }
+        val sv = android.widget.ScrollView(ctx).apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(MATCH, MATCH)
+            addView(inner)
+        }
+        val url = webView.url ?: ""
+        val site = url.let { runCatching { java.net.URL(it).let { u -> "${u.protocol}://${u.host}" } }.getOrElse { it } }
+
+        inner.addView(sectionHeader(ctx, "☁ CloudStream3 Plugin Generator"))
+        inner.addView(tv(ctx, "Site: $site", "#888", 10f).apply { setPadding(0, 0, 0, 8.dp) })
+
+        // Plugin name input
+        val inputName = editText(ctx, "Plugin name (e.g. HentaiZ)").apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 8.dp }
+            setText(site.substringAfterLast("/").substringAfterLast(".").replaceFirstChar { it.uppercaseChar() })
+        }
+        inner.addView(inputName)
+
+        // URL Pattern analysis
+        val btnAnalyze = btn(ctx, "🔍 Analyze URL Patterns", "#1A1A2A", "#64B5F6").apply {
+            setOnClickListener {
+                val analysis = PluginGenerator.analyzePatterns(detector.requests)
+                showCodeDialog(ctx, "URL Patterns", analysis)
+            }
+        }
+        inner.addView(btnAnalyze)
+
+        // Generate extractor code
+        val btnExtractor = btn(ctx, "⚙ Generate Extractor Code", "#1A2A1A", "#4CAF50").apply {
+            setOnClickListener {
+                val cookies = CookieExporter.toDocument(url)
+                val session = PluginGenerator.SessionData(
+                    streams  = detector.streams,
+                    requests = detector.requests,
+                    siteUrl  = site,
+                    cookies  = cookies,
+                    referer  = url
+                )
+                showCodeDialog(ctx, "ExtractorLink Code", PluginGenerator.generateExtractorCode(session))
+            }
+        }
+        inner.addView(btnExtractor)
+
+        // Generate full skeleton
+        val btnSkeleton = btn(ctx, "📋 Generate Plugin Skeleton", "#2A1A1A", "#FF8A65").apply {
+            setOnClickListener {
+                val name = inputName.text.toString().ifBlank { "MyPlugin" }
+                showCodeDialog(ctx, "Plugin Skeleton", PluginGenerator.generateSkeleton(name, site))
+            }
+        }
+        inner.addView(btnSkeleton)
+
+        inner.addView(divider(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH, 1).apply { topMargin = 12.dp; bottomMargin = 8.dp }
+        })
+        inner.addView(sectionHeader(ctx, "Session Summary"))
+        inner.addView(tv(ctx, buildString {
+            appendLine("Streams captured: ${detector.streamCount()}")
+            appendLine("Requests captured: ${detector.requestCount()}")
+            appendLine("WebSocket messages: ${detector.wsCount()}")
+            appendLine("Crypto keys: ${detector.cryptoCount()}")
+            val cookies = CookieExporter.toDocument(url)
+            appendLine("Cookies: ${if (cookies.isBlank()) "none" else "${cookies.split(";").size} entries"}")
+        }, "#EFEFEF", 11f))
+
+        contentFrame.removeAllViews()
+        contentFrame.addView(sv)
+    }
+
+    private fun showCodeDialog(ctx: android.content.Context, title: String, code: String) {
+        val sv  = android.widget.ScrollView(ctx)
+        val tvCode = tv(ctx, code, "#EFEFEF", 10f).apply {
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setPadding(16.dp, 8.dp, 16.dp, 8.dp)
+        }
+        sv.addView(tvCode)
+        AlertDialog.Builder(ctx).setTitle(title).setView(sv)
+            .setPositiveButton("Copy") { _,_ -> copy(code) }
+            .setNegativeButton("Đóng", null).show()
+    }
+
+    // ── A7: Auto-test stream ──────────────────────────────────────────────────
+    private suspend fun testStream(url: String, referer: String): Boolean {
+        return try {
+            val req = okhttp3.Request.Builder().url(url).head()
+                .addHeader("Referer", referer)
+                .addHeader("User-Agent", "Mozilla/5.0")
+                .build()
+            okhttp3.OkHttpClient.Builder()
+                .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+                .newCall(req).execute().use { it.isSuccessful }
+        } catch (_: Exception) { false }
+    }
+
+    // ── A2: Quality dialog ────────────────────────────────────────────────────
+    private fun showQualityDialog(qualities: List<M3u8QualityParser.Quality>, referer: String) {
+        val ctx = requireContext()
+        if (qualities.isEmpty()) {
+            AlertDialog.Builder(ctx).setTitle("Quality Info")
+                .setMessage("Không parse được quality variants (có thể là single-bitrate stream).")
+                .setPositiveButton("OK", null).show()
+            return
+        }
+        val labels = qualities.map { "${it.label} — ${it.bandwidth/1000}kbps ${it.codecs.take(20)}" }
+        AlertDialog.Builder(ctx).setTitle("Chọn quality")
+            .setItems(labels.toTypedArray()) { _, i ->
+                copy(qualities[i].url)
+                Toast.makeText(ctx, "Đã copy ${qualities[i].label} URL", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Đóng", null).show()
     }
 
     companion object { const val TAG = "DevToolsSheet" }
