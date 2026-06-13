@@ -20,6 +20,8 @@ import com.aho.streambrowser.util.CookieExporter
 import com.aho.streambrowser.util.JwtDecoder
 import com.aho.streambrowser.util.M3u8QualityParser
 import com.aho.streambrowser.util.PluginGenerator
+import com.aho.streambrowser.util.HarExporter
+import com.aho.streambrowser.util.AesKeyFinder
 import kotlinx.coroutines.launch
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
@@ -157,6 +159,8 @@ class DevToolsSheet(
         10 -> showWsTab()
         11 -> showCookieTab()
         12 -> showPluginTab()
+        13 -> showStorageTab()
+        14 -> showCssTab()
         else -> {}
     }
 
@@ -333,7 +337,15 @@ class DevToolsSheet(
             layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f).apply { marginStart = 8.dp }
             gravity = Gravity.END
         }
-        actionRow.addView(btnCopyAll); actionRow.addView(btnCopy3k); actionRow.addView(tvSize)
+        val btnHar = btn(ctx, "📥 HAR", "#1A1A2A", "#64B5F6").apply {
+            setOnClickListener {
+                scope.launch {
+                    val har = HarExporter.export(detector.requests)
+                    post { showCodeDialog(requireContext(), "HAR Export (${detector.requestCount()} requests)", har) }
+                }
+            }
+        }
+        actionRow.addView(btnCopyAll); actionRow.addView(btnCopy3k); actionRow.addView(btnHar); actionRow.addView(tvSize)
         container.addView(actionRow)
 
         // ── State & logic ─────────────────────────────────────────────────────
@@ -785,6 +797,11 @@ class DevToolsSheet(
         extraRow.addView(btnOkHttp); extraRow.addView(btnCs3)
         content.addView(extraRow)
 
+        val btnReplay = btn(ctx, "↺ Replay", "#2A1A1A", "#FF8A65").apply {
+            setOnClickListener { showReplayDialog(req) }
+        }
+        extraRow.addView(btnReplay)
+
         AlertDialog.Builder(ctx)
             .setTitle("Request Detail")
             .setView(scrollView)
@@ -1081,7 +1098,35 @@ class DevToolsSheet(
         // ── Section: Encrypted Response Bodies ───────────────────────────
         inner.addView(divider(ctx).apply { layoutParams = LinearLayout.LayoutParams(MATCH, 1).apply { topMargin = 12.dp; bottomMargin = 12.dp } })
         val bodies = detector.responseBodies
-        inner.addView(sectionHeader(ctx, "🔒 Encrypted Responses (${bodies.size})"))
+        // AES Key Finder from loaded JS files
+        inner.addView(divider(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH, 1).apply { topMargin = 4.dp; bottomMargin = 8.dp }
+        })
+        inner.addView(sectionHeader(ctx, "🔍 Find AES Keys in JS Files"))
+        val btnFindKeys = btn(ctx, "Scan JS Files for Keys", "#1A2A2A", "#FFD54F").apply {
+            setOnClickListener {
+                text = "Scanning..."
+                val jsUrls = detector.requests.filter {
+                    it.url.endsWith(".js") || it.url.contains(".js?")
+                }.map { it.url }.take(15)
+                scope.launch {
+                    val found = AesKeyFinder.scanJsFiles(jsUrls, webView.url ?: "")
+                    post {
+                        text = "Scan JS Files for Keys"
+                        if (found.isEmpty()) {
+                            Toast.makeText(requireContext(), "Không tìm thấy key nào trong ${jsUrls.size} JS files", Toast.LENGTH_SHORT).show()
+                        } else {
+                            showFoundKeysDialog(found)
+                        }
+                    }
+                }
+            }
+        }
+        inner.addView(btnFindKeys)
+        inner.addView(tv(ctx, "${detector.requests.count { it.url.endsWith(".js") || it.url.contains(".js?") }} JS files available to scan", "#666", 10f)
+            .apply { setPadding(0, 2.dp, 0, 12.dp) })
+
+        inner.addView(sectionHeader(ctx, "🔒 Encrypted Responses (${bodies.size})")  )
         if (bodies.isEmpty()) {
             inner.addView(tv(ctx, "Chưa có. XHR trả về hex IV:CIPHERTEXT sẽ hiện ở đây.", "#888888", 12f).apply { setPadding(0,8.dp,0,16.dp) })
         } else {
@@ -1475,6 +1520,245 @@ class DevToolsSheet(
                 Toast.makeText(ctx, "Đã copy ${qualities[i].label} URL", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Đóng", null).show()
+    }
+
+
+
+    // ── 💾 Storage Tab (D4+D5) ───────────────────────────────────────────────
+    private fun showStorageTab() {
+        val ctx = requireContext()
+        val inner = col(ctx).apply { setPadding(12.dp, 8.dp, 12.dp, 16.dp) }
+        val sv = android.widget.ScrollView(ctx).apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(MATCH, MATCH)
+        }
+        sv.addView(inner)
+
+        inner.addView(sectionHeader(ctx, "💾 localStorage & sessionStorage"))
+        val tvResult = tv(ctx, "Đang đọc...", "#EFEFEF", 10f).apply {
+            typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
+        }
+        inner.addView(tvResult)
+
+        webView.evaluateJavascript("""
+            (function() {
+                try {
+                    var ls = {}, ss = {};
+                    for (var i = 0; i < localStorage.length; i++) {
+                        var k = localStorage.key(i); ls[k] = localStorage.getItem(k);
+                    }
+                    for (var i = 0; i < sessionStorage.length; i++) {
+                        var k = sessionStorage.key(i); ss[k] = sessionStorage.getItem(k);
+                    }
+                    return JSON.stringify({localStorage: ls, sessionStorage: ss});
+                } catch(e) { return JSON.stringify({error: e.toString()}); }
+            })()
+        """) { raw ->
+            val result = raw?.trim()?.removeSurrounding("\"")?.replace("\\\"","\"")?.replace("\\n","\n") ?: "{}"
+            activity?.runOnUiThread {
+                try {
+                    val json = org.json.JSONObject(result)
+                    val sb = StringBuilder()
+                    sb.appendLine("=== localStorage ===")
+                    val ls = json.optJSONObject("localStorage")
+                    if (ls == null || ls.length() == 0) sb.appendLine("(empty)")
+                    else ls.keys().forEach { k -> sb.appendLine("$k: ${ls.getString(k).take(120)}") }
+                    sb.appendLine()
+                    sb.appendLine("=== sessionStorage ===")
+                    val ss = json.optJSONObject("sessionStorage")
+                    if (ss == null || ss.length() == 0) sb.appendLine("(empty)")
+                    else ss.keys().forEach { k -> sb.appendLine("$k: ${ss.getString(k).take(120)}") }
+                    tvResult.text = sb.toString()
+
+                    // Add copy + clear buttons
+                    val btnCopy = btn(ctx, "Copy All", "#1A1A1A").apply {
+                        setOnClickListener { copy(sb.toString()) }
+                    }
+                    val btnClearLs = btn(ctx, "🗑 Clear localStorage", "#2A1A1A", "#E57373").apply {
+                        setOnClickListener {
+                            webView.evaluateJavascript("localStorage.clear(); void 0", null)
+                            Toast.makeText(ctx, "localStorage cleared", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    val btnClearSs = btn(ctx, "🗑 Clear sessionStorage", "#2A1A1A", "#E57373").apply {
+                        setOnClickListener {
+                            webView.evaluateJavascript("sessionStorage.clear(); void 0", null)
+                            Toast.makeText(ctx, "sessionStorage cleared", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    listOf(btnCopy, btnClearLs, btnClearSs).forEach { inner.addView(it) }
+                } catch (_: Exception) { tvResult.text = result }
+            }
+        }
+
+        contentFrame.removeAllViews()
+        contentFrame.addView(sv)
+    }
+
+    // ── 🎨 CSS Injector Tab (D3) ─────────────────────────────────────────────
+    private fun showCssTab() {
+        val ctx = requireContext()
+        val inner = col(ctx).apply { setPadding(12.dp, 8.dp, 12.dp, 16.dp) }
+        val sv = android.widget.ScrollView(ctx).apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(MATCH, MATCH)
+            addView(inner)
+        }
+        inner.addView(sectionHeader(ctx, "🎨 CSS Injector"))
+
+        val inputCss = editText(ctx, "/* Nhập CSS tại đây */\nbody { background: #000 !important; }").apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH, (160 * resources.displayMetrics.density).toInt()).apply {
+                bottomMargin = 8.dp
+            }
+            minLines = 6
+        }
+        inner.addView(inputCss)
+
+        val btnInject = btn(ctx, "▶ Inject CSS", "#1A2A1A", "#4CAF50").apply {
+            setOnClickListener {
+                val css = inputCss.text.toString()
+                    .replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+                val js = """
+                    (function() {
+                        var id = '__sb_css_inject';
+                        var el = document.getElementById(id);
+                        if (!el) { el = document.createElement('style'); el.id = id; document.head.appendChild(el); }
+                        el.textContent = `$css`;
+                        return 'injected';
+                    })()
+                """.trimIndent()
+                webView.evaluateJavascript(js) { res ->
+                    activity?.runOnUiThread {
+                        Toast.makeText(ctx, "CSS injected ✅", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+        val btnRemove = btn(ctx, "✖ Remove CSS", "#2A1A1A", "#E57373").apply {
+            setOnClickListener {
+                webView.evaluateJavascript("""
+                    var el = document.getElementById('__sb_css_inject');
+                    if (el) el.remove(); 'removed'
+                """.trimIndent(), null)
+                Toast.makeText(ctx, "CSS removed", Toast.LENGTH_SHORT).show()
+            }
+        }
+        inner.addView(row(ctx).apply { addView(btnInject); addView(btnRemove) })
+
+        inner.addView(divider(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH, 1).apply { topMargin = 12.dp; bottomMargin = 8.dp }
+        })
+        inner.addView(sectionHeader(ctx, "Presets"))
+        val presets = mapOf(
+            "🌑 Dark override" to """* { background: #111 !important; color: #eee !important; } a { color: #64b5f6 !important; }""",
+            "🙈 Hide ads"       to """.ad,.ads,.advertisement,[id*=ad],[class*=ad],iframe[src*=ad] { display:none!important; }""",
+            "👁 Show hidden"    to """[style*="display:none"],[hidden] { display:block!important; visibility:visible!important; }""",
+            "🔍 Highlight video" to """video { outline: 3px solid #1D9E75 !important; }""",
+            "📐 Desktop layout"  to """body { min-width: 1280px !important; zoom: 0.7; }"""
+        )
+        presets.forEach { (label, css) ->
+            inner.addView(btn(ctx, label, "#141414").apply {
+                setOnClickListener { inputCss.setText(css) }
+            })
+        }
+
+        contentFrame.removeAllViews()
+        contentFrame.addView(sv)
+    }
+
+    // ── B6: Request Replay Dialog ─────────────────────────────────────────────
+    private fun showReplayDialog(req: NetworkRequest) {
+        val ctx = requireContext()
+        val inner = col(ctx).apply { setPadding(16.dp, 8.dp, 16.dp, 8.dp) }
+        val sv = android.widget.ScrollView(ctx)
+        sv.addView(inner)
+
+        inner.addView(sectionHeader(ctx, "URL"))
+        val inputUrl = editText(ctx, req.url).apply {
+            setText(req.url)
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 6.dp }
+        }
+        inner.addView(inputUrl)
+
+        inner.addView(sectionHeader(ctx, "Headers (một dòng = key: value)"))
+        val headersText = req.headers
+            .filter { (k, _) -> k.lowercase() !in listOf("host", "connection", "accept-encoding") }
+            .entries.joinToString("\n") { "${it.key}: ${it.value}" }
+        val inputHeaders = editText(ctx, "Header: Value").apply {
+            setText(headersText)
+            minLines = 4
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 6.dp }
+        }
+        inner.addView(inputHeaders)
+
+        val tvResponse = tv(ctx, "", "#EFEFEF", 10f).apply {
+            typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
+            setPadding(0, 8.dp, 0, 0)
+        }
+
+        AlertDialog.Builder(ctx)
+            .setTitle("↺ Replay Request")
+            .setView(sv)
+            .setPositiveButton("Send") { _, _ ->
+                val url = inputUrl.text.toString().trim()
+                val headers = inputHeaders.text.toString().lines()
+                    .mapNotNull { line ->
+                        val i = line.indexOf(":"); if (i < 0) null
+                        else line.substring(0,i).trim() to line.substring(i+1).trim()
+                    }.toMap()
+                executeReplay(url, headers) { status, body ->
+                    inner.addView(sectionHeader(ctx, "Response: HTTP $status"))
+                    tvResponse.text = body.take(5000)
+                    inner.addView(tvResponse)
+                    inner.addView(btn(ctx, "Copy Response", "#1A1A1A").apply {
+                        setOnClickListener { copy(body) }
+                    })
+                }
+            }
+            .setNegativeButton("Đóng", null)
+            .show()
+    }
+
+    private fun executeReplay(url: String, headers: Map<String,String>, onResult: (Int, String) -> Unit) {
+        scope.launch {
+            try {
+                val rb = okhttp3.Request.Builder().url(url)
+                headers.forEach { (k, v) -> rb.addHeader(k, v) }
+                rb.get()
+                val resp = okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                    .build().newCall(rb.build()).execute()
+                val status = resp.code
+                val body   = resp.body?.string()?.take(50000) ?: ""
+                resp.close()
+                post { onResult(status, body) }
+            } catch (e: Exception) { post { onResult(-1, e.message ?: "Error") } }
+        }
+    }
+
+    // ── C1: Found keys dialog ─────────────────────────────────────────────────
+    private fun showFoundKeysDialog(found: List<AesKeyFinder.FoundKey>) {
+        val ctx = requireContext()
+        val inner = col(ctx).apply { setPadding(12.dp, 8.dp, 12.dp, 16.dp) }
+        val sv = android.widget.ScrollView(ctx)
+        sv.addView(inner)
+        inner.addView(sectionHeader(ctx, "${found.size} potential keys found"))
+        found.forEach { key ->
+            val card = col(ctx, "#1A2A1A").apply {
+                setPadding(8.dp, 6.dp, 8.dp, 6.dp)
+                layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 6.dp }
+            }
+            card.addView(tv(ctx, "[${key.keyType}] ${key.keyValue}", "#4CAF50", 11f).apply {
+                typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
+            })
+            card.addView(tv(ctx, "…${key.context.take(100)}…", "#888", 9f))
+            card.addView(tv(ctx, key.jsUrl.substringAfterLast("/").take(50), "#555", 9f))
+            card.addView(btn(ctx, "Copy Key", "#1A2A1A", "#4CAF50").apply {
+                setOnClickListener { copy(key.keyValue) }
+            })
+            inner.addView(card)
+        }
+        AlertDialog.Builder(ctx).setTitle("🔍 AES Keys Found")
+            .setView(sv).setNegativeButton("Đóng", null).show()
     }
 
     companion object { const val TAG = "DevToolsSheet" }

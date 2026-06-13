@@ -189,6 +189,7 @@ class MainActivity : AppCompatActivity() {
         }
         b.btnBookmark.setOnLongClickListener { showBookmarkHistory(); true }
         b.btnDevTools.setOnClickListener { openDevTools() }
+        b.btnDevTools.setOnLongClickListener { showQuickActions(); true }
         b.btnPickerFloat.setOnClickListener { togglePicker() }
     }
 
@@ -327,6 +328,55 @@ class MainActivity : AppCompatActivity() {
         (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
             .setPrimaryClip(ClipData.newPlainText("text", text))
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
+
+    // ── F10: Quick action menu ───────────────────────────────────────────────
+    private fun showQuickActions() {
+        val streams = detector.streams
+        val items   = mutableListOf<String>()
+        val actions = mutableListOf<() -> Unit>()
+        streams.firstOrNull()?.url?.let { url ->
+            items.add("📋 Copy last stream URL")
+            actions.add { copyToClipboard(url, "Stream URL copied") }
+        }
+        if (streams.isNotEmpty()) {
+            items.add("⚙ Export as cURL")
+            actions.add {
+                val out = streams.take(5).joinToString("\n\n") { s ->
+                    "curl \"${s.url}\" -H \"Referer: ${s.referer}\""
+                }
+                copyToClipboard(out, "${streams.size.coerceAtMost(5)} cURLs copied")
+            }
+        }
+        items.add("🗑 Clear session")
+        actions.add { detector.clear(); updateFab(); Toast.makeText(this, "Session cleared", Toast.LENGTH_SHORT).show() }
+        items.add(if (isIncognito) "🔓 Exit incognito" else "🕵 Incognito mode")
+        actions.add { toggleIncognito() }
+        items.add(if (isDesktopMode) "📱 Mobile mode" else "🖥 Desktop mode")
+        actions.add { toggleDesktopMode() }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Quick Actions")
+            .setItems(items.toTypedArray()) { _, i -> actions[i].invoke() }
+            .setNegativeButton("Đóng", null).show()
+    }
+
+    // ── J3: Incognito mode ────────────────────────────────────────────────────
+    private var isIncognito = false
+    private fun toggleIncognito() {
+        isIncognito = !isIncognito
+        if (isIncognito) {
+            android.webkit.CookieManager.getInstance().removeAllCookies(null)
+            b.webView.clearCache(true)
+            b.webView.clearHistory()
+            b.webView.settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
+            b.toolbar.setBackgroundColor(android.graphics.Color.parseColor("#1A1A2A"))
+            Toast.makeText(this, "Incognito ON", Toast.LENGTH_LONG).show()
+        } else {
+            b.webView.settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+            b.toolbar.setBackgroundColor(android.graphics.Color.parseColor("#141414"))
+            Toast.makeText(this, "Incognito OFF", Toast.LENGTH_SHORT).show()
+        }
     }
 
     override fun onPause()   { super.onPause();   b.webView.onPause()  }

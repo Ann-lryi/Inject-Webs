@@ -110,7 +110,10 @@ class BrowserWebViewClient(
 
     private fun fetchResponseAsync(url: String, headers: Map<String, String>, method: String) {
         if (method.uppercase() !in listOf("GET", "HEAD")) return
-        if (activeRequests.get() >= MAX_CONCURRENT) return
+        // G3: Skip if at capacity — but allow stream URLs through at lower threshold
+        val isStream = url.contains(".m3u8") || url.contains(".mpd") || url.contains(".m3u9")
+        val limit = if (isStream) MAX_CONCURRENT else MAX_CONCURRENT - 2
+        if (activeRequests.get() >= limit) return
         activeRequests.incrementAndGet()
 
         scope.launch {

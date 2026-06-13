@@ -765,10 +765,25 @@ class StreamDetector(private val context: Context? = null) {
     }
 
     @Synchronized private fun addRequest(req: NetworkRequest) {
-        if (_requests.any { it.url == req.url }) return
+        // G2: Normalize URL for dedup — ignore timestamp/token query params
+        val normalizedUrl = normalizeUrlForDedup(req.url)
+        if (_requests.any { normalizeUrlForDedup(it.url) == normalizedUrl }) return
         _requests.add(0, req)
         if (_requests.size > 500) _requests.removeAt(_requests.lastIndex)
         onRequestAdded?.invoke(req)
+    }
+
+    private fun normalizeUrlForDedup(url: String): String {
+        return try {
+            val noQuery = url.substringBefore("?")
+            val query   = url.substringAfter("?", "")
+            // Keep only non-volatile params (drop t=, ts=, token=, sign=, _=, etc.)
+            val cleanQ = query.split("&").filter { param ->
+                val k = param.substringBefore("=").lowercase()
+                k !in listOf("t","ts","token","sign","_","cb","cache","v","ver","bust","nonce","rand","timestamp","expires","expire")
+            }.joinToString("&")
+            if (cleanQ.isEmpty()) noQuery else "$noQuery?$cleanQ"
+        } catch (_: Exception) { url }
     }
 
     @Synchronized private fun addStream(item: StreamItem) {
