@@ -161,6 +161,10 @@ class DevToolsSheet(
         12 -> showPluginTab()
         13 -> showStorageTab()
         14 -> showCssTab()
+        15 -> showTimelineTab()
+        16 -> showSwIdbTab()
+        17 -> showDomTab()
+        18 -> showProxyTab()
         else -> {}
     }
 
@@ -319,6 +323,25 @@ class DevToolsSheet(
 
         // ── Action row ────────────────────────────────────────────────────────
         val actionRow = row(ctx, "#141414").apply { setPadding(8.dp, 6.dp, 8.dp, 6.dp) }
+        val btnSnap = btn(ctx, "📸 Snap", "#1A1A2A", "#90CAF9").apply {
+            setOnClickListener {
+                snapshotUrls = detector.requests.map { it.url }.toSet()
+                Toast.makeText(requireContext(), "Snapshot: ${snapshotUrls.size} requests", Toast.LENGTH_SHORT).show()
+            }
+        }
+        val btnDiff = btn(ctx, "🔍 Diff", "#1A2A1A", "#A5D6A7").apply {
+            setOnClickListener { showDiffDialog() }
+        }
+        // J1: SSL bypass toggle
+        var sslOn = false
+        val btnSsl = btn(ctx, "🔒 SSL", "#2A1A1A", "#888888").apply {
+            setOnClickListener {
+                sslOn = !sslOn
+                (activity as? com.aho.streambrowser.ui.MainActivity)?.setSslBypass(sslOn)
+                setTextColor(android.graphics.Color.parseColor(if (sslOn) "#E57373" else "#888888"))
+                text = if (sslOn) "⚠ SSL" else "🔒 SSL"
+            }
+        }
         val btnCopyAll = Button(ctx).apply {
             text = "Copy All"; textSize = 11f
             setTextColor(Color.WHITE); setBackgroundColor(Color.parseColor("#0D47A1"))
@@ -345,7 +368,7 @@ class DevToolsSheet(
                 }
             }
         }
-        actionRow.addView(btnCopyAll); actionRow.addView(btnCopy3k); actionRow.addView(btnHar); actionRow.addView(tvSize)
+        actionRow.addView(btnSnap); actionRow.addView(btnDiff); actionRow.addView(btnSsl); actionRow.addView(btnHar); actionRow.addView(tvSize)
         container.addView(actionRow)
 
         // ── State & logic ─────────────────────────────────────────────────────
@@ -900,12 +923,37 @@ class DevToolsSheet(
                 outputTv.text = log
             }
         }
-        listOf(prefix, jsInput, btnUp, btnRun, btnClear).forEach { inputRow.addView(it) }
+        // D1: History button
+        val btnHist = btn(ctx, "⏫", "#1A1A2A", "#90CAF9").apply {
+            setOnClickListener {
+                if (consoleHistory.isEmpty()) return@setOnClickListener
+                consoleHistoryIndex = (consoleHistoryIndex + 1).coerceAtMost(consoleHistory.size - 1)
+                jsInput.setText(consoleHistory[consoleHistoryIndex])
+                jsInput.setSelection(jsInput.text.length)
+            }
+            setOnLongClickListener {
+                if (consoleHistory.isEmpty()) return@setOnLongClickListener true
+                val names = consoleHistory.take(20).toTypedArray()
+                android.app.AlertDialog.Builder(requireContext())
+                    .setTitle("History")
+                    .setItems(names) { _, i ->
+                        jsInput.setText(consoleHistory[i])
+                        consoleHistoryIndex = i
+                    }.show()
+                true
+            }
+        }
+        listOf(prefix, jsInput, btnHist, btnRun, btnClear).forEach { inputRow.addView(it) }
         container.addView(inputRow)
     }
 
     private fun runJs(code: String, output: TextView, scroll: ScrollView, log: StringBuilder, label: String) {
         log.append("\n▶ $label\n"); output.text = log
+        // D1: Save to console history
+        consoleHistory.remove(code)
+        consoleHistory.add(0, code)
+        if (consoleHistory.size > 50) consoleHistory.removeAt(consoleHistory.lastIndex)
+        consoleHistoryIndex = -1
         webView.evaluateJavascript(code) { result ->
             requireActivity().runOnUiThread {
                 val d = when {
@@ -1761,6 +1809,10 @@ class DevToolsSheet(
             .setView(sv).setNegativeButton("Đóng", null).show()
     }
 
+    private var snapshotUrls: Set<String> = emptySet()
+    private val consoleHistory = mutableListOf<String>()
+    private var consoleHistoryIndex = -1
+
     companion object { const val TAG = "DevToolsSheet" }
 }
 
@@ -1797,4 +1849,592 @@ class NetworkAdapter(
         h.tvHost.text=req.host; h.tvPath.text=req.path
         h.itemView.setOnClickListener{onClick(req)}
     }
+// ─────────────────────────────────────────────────────────────────────────
+    // B1: Network Waterfall / Timeline Tab
+    // ─────────────────────────────────────────────────────────────────────────
+    private fun showTimelineTab() {
+        val ctx  = requireContext()
+        val reqs = detector.requests.sortedBy { it.timestamp }
+        if (reqs.isEmpty()) {
+            contentFrame.removeAllViews()
+            contentFrame.addView(tv(ctx, "Chưa có requests.", "#888", 13f).apply { setPadding(16.dp,16.dp,16.dp,16.dp) })
+            return
+        }
+        val t0   = reqs.first().timestamp
+        val tEnd = reqs.last().timestamp.let { if (it == t0) t0 + 1 else it }
+        val span = (tEnd - t0).toFloat().coerceAtLeast(1f)
+
+        val outer = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+        }
+        // Header row
+        val header = row(ctx, "#141414").apply {
+            setPadding(8.dp, 6.dp, 8.dp, 6.dp)
+        }
+        header.addView(tv(ctx, "Tag", "#EFEFEF", 9f).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(36.dp, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
+        })
+        header.addView(tv(ctx, "Host / Timeline (+ms)", "#EFEFEF", 9f).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        header.addView(tv(ctx, "Status", "#EFEFEF", 9f).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(36.dp, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
+        })
+        outer.addView(header)
+
+        val scroll = android.widget.ScrollView(ctx).apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(MATCH, MATCH)
+        }
+        val inner = col(ctx)
+        scroll.addView(inner)
+
+        reqs.take(200).forEach { req ->
+            val relStart = ((req.timestamp - t0).toFloat() / span)
+            val row2     = android.widget.LinearLayout(ctx).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                setPadding(8.dp, 3.dp, 8.dp, 3.dp)
+                setOnClickListener { showRequestDetail(req) }
+            }
+            // Tag badge
+            val tagTv = tv(ctx, req.tag, "#FFFFFF", 8f).apply {
+                layoutParams = android.widget.LinearLayout.LayoutParams(36.dp, 18.dp)
+                gravity = android.view.Gravity.CENTER
+                setBackgroundColor(android.graphics.Color.parseColor(req.tagColor))
+                setPadding(2.dp, 0, 2.dp, 0)
+            }
+            // Timeline bar area
+            val barFrame = android.widget.FrameLayout(ctx).apply {
+                layoutParams = android.widget.LinearLayout.LayoutParams(0, 24.dp, 1f)
+            }
+            val barWrapper = android.widget.LinearLayout(ctx).apply {
+                orientation = android.widget.LinearLayout.HORIZONTAL
+                layoutParams = android.widget.FrameLayout.LayoutParams(MATCH, MATCH)
+            }
+            // Spacer before bar
+            val spacer = android.view.View(ctx).apply {
+                layoutParams = android.widget.LinearLayout.LayoutParams(0, MATCH, relStart)
+            }
+            // The bar itself
+            val barMinW = 3.dp
+            val barW = ((1f - relStart) * 0.4f).coerceAtLeast(0f)
+            val bar = android.view.View(ctx).apply {
+                layoutParams = android.widget.LinearLayout.LayoutParams(barMinW, MATCH)
+                setBackgroundColor(android.graphics.Color.parseColor(req.tagColor))
+            }
+            // Host label
+            val hostTv = tv(ctx, req.host.take(20), "#AAAAAA", 8f).apply {
+                layoutParams = android.widget.LinearLayout.LayoutParams(0, MATCH, 1f - relStart - barW)
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(4.dp, 0, 0, 0)
+            }
+            barWrapper.addView(spacer); barWrapper.addView(bar); barWrapper.addView(hostTv)
+            barFrame.addView(barWrapper)
+            // Timestamp label
+            val msTv = tv(ctx, "+${req.timestamp - t0}ms", "#666666", 7f).apply {
+                gravity = android.view.Gravity.END or android.view.Gravity.CENTER_VERTICAL
+                layoutParams = android.widget.FrameLayout.LayoutParams(WRAP, MATCH, android.view.Gravity.END)
+            }
+            barFrame.addView(msTv)
+            // Status
+            val statusTv = tv(ctx,
+                if (req.statusCode > 0) req.statusCode.toString() else "…",
+                if (req.statusCode in 200..299) "#4CAF50" else if (req.statusCode >= 400) "#E57373" else "#888888",
+                8f
+            ).apply {
+                layoutParams = android.widget.LinearLayout.LayoutParams(36.dp, WRAP)
+                gravity = android.view.Gravity.CENTER
+            }
+            row2.addView(tagTv); row2.addView(barFrame); row2.addView(statusTv)
+            inner.addView(row2)
+            // Divider
+            inner.addView(android.view.View(ctx).apply {
+                layoutParams = android.widget.LinearLayout.LayoutParams(MATCH, 1).apply { marginStart = 44.dp }
+                setBackgroundColor(android.graphics.Color.parseColor("#222222"))
+            })
+        }
+
+        outer.addView(scroll)
+        contentFrame.removeAllViews()
+        contentFrame.addView(outer)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // B2: Request Diff Dialog
+    // ─────────────────────────────────────────────────────────────────────────
+    private fun showDiffDialog() {
+        val ctx  = requireContext()
+        if (snapshotUrls.isEmpty()) {
+            Toast.makeText(ctx, "Chưa có snapshot. Bấm 📸 Snap trước.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val newReqs = detector.requests.filter { it.url !in snapshotUrls }
+        val inner   = col(ctx).apply { setPadding(12.dp, 8.dp, 12.dp, 16.dp) }
+        val sv      = android.widget.ScrollView(ctx)
+        sv.addView(inner)
+        inner.addView(sectionHeader(ctx, "🔍 New since snapshot: ${newReqs.size} requests"))
+        if (newReqs.isEmpty()) {
+            inner.addView(tv(ctx, "Không có request mới so với snapshot.", "#888", 12f))
+        } else {
+            newReqs.forEach { req ->
+                val card = col(ctx, "#141414").apply {
+                    setPadding(8.dp, 5.dp, 8.dp, 5.dp)
+                    layoutParams = android.widget.LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 3.dp }
+                    setOnClickListener { showRequestDetail(req) }
+                }
+                val color = if (req.isStream) "#4CAF50" else "#EFEFEF"
+                card.addView(tv(ctx, "[${req.tag}] ${req.host}${req.path.take(50)}", color, 10f))
+                card.addView(tv(ctx, req.url.take(80), "#666", 9f).apply {
+                    typeface = android.graphics.Typeface.MONOSPACE
+                })
+                inner.addView(card)
+            }
+        }
+        val btnUpdate = btn(ctx, "Update Snapshot", "#1A1A2A", "#90CAF9").apply {
+            setOnClickListener {
+                snapshotUrls = detector.requests.map { it.url }.toSet()
+                Toast.makeText(ctx, "Snapshot updated: ${snapshotUrls.size}", Toast.LENGTH_SHORT).show()
+            }
+        }
+        inner.addView(btnUpdate)
+        android.app.AlertDialog.Builder(ctx).setTitle("Request Diff")
+            .setView(sv).setNegativeButton("Đóng", null).show()
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // D5+D6: Service Worker + IndexedDB Tab
+    // ─────────────────────────────────────────────────────────────────────────
+    private fun showSwIdbTab() {
+        val ctx   = requireContext()
+        val inner = col(ctx).apply { setPadding(12.dp, 8.dp, 12.dp, 16.dp) }
+        val sv    = android.widget.ScrollView(ctx).apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(MATCH, MATCH)
+            addView(inner)
+        }
+
+        // ── Service Worker ──
+        inner.addView(sectionHeader(ctx, "⚙ Service Workers"))
+        val tvSw = tv(ctx, "Đang kiểm tra...", "#EFEFEF", 10f).apply {
+            typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
+        }
+        inner.addView(tvSw)
+
+        webView.evaluateJavascript("""
+            (function() {
+                if (!navigator.serviceWorker) return JSON.stringify([]);
+                return navigator.serviceWorker.getRegistrations().then(function(regs) {
+                    return JSON.stringify(regs.map(function(r) {
+                        return {
+                            scope: r.scope,
+                            state: r.active ? r.active.state : 'none',
+                            scriptURL: r.active ? r.active.scriptURL : ''
+                        };
+                    }));
+                }).catch(function(e) { return JSON.stringify({error: e.toString()}); });
+            })()
+        """.trimIndent()) { raw ->
+            activity?.runOnUiThread {
+                val clean = raw?.trim()?.removeSurrounding("\"")?.replace("\\\"","\"")?.replace("\\n","") ?: "[]"
+                try {
+                    val arr = org.json.JSONArray(clean)
+                    if (arr.length() == 0) {
+                        tvSw.text = "Không có Service Worker nào đăng ký."
+                    } else {
+                        val sb = StringBuilder()
+                        for (i in 0 until arr.length()) {
+                            val obj = arr.getJSONObject(i)
+                            sb.appendLine("Scope: ${obj.optString("scope")}")
+                            sb.appendLine("State: ${obj.optString("state")}")
+                            sb.appendLine("Script: ${obj.optString("scriptURL").take(80)}")
+                            sb.appendLine()
+                        }
+                        tvSw.text = sb.toString()
+                    }
+                } catch (_: Exception) { tvSw.text = clean }
+            }
+        }
+
+        val btnUnregisterSw = btn(ctx, "🗑 Unregister All SW", "#2A1A1A", "#E57373").apply {
+            setOnClickListener {
+                webView.evaluateJavascript("""
+                    navigator.serviceWorker.getRegistrations().then(function(regs) {
+                        regs.forEach(function(r) { r.unregister(); });
+                        return 'unregistered ' + regs.length;
+                    })
+                """.trimIndent()) { res ->
+                    activity?.runOnUiThread {
+                        Toast.makeText(ctx, "SW unregistered: $res", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+        inner.addView(btnUnregisterSw)
+
+        inner.addView(divider(ctx).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(MATCH, 1).apply { topMargin = 12.dp; bottomMargin = 12.dp }
+        })
+
+        // ── IndexedDB ──
+        inner.addView(sectionHeader(ctx, "🗄 IndexedDB"))
+        val tvIdb = tv(ctx, "Đang kiểm tra...", "#EFEFEF", 10f).apply {
+            typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
+        }
+        inner.addView(tvIdb)
+
+        webView.evaluateJavascript("""
+            (function() {
+                if (!window.indexedDB) return Promise.resolve(JSON.stringify({error:'not supported'}));
+                return indexedDB.databases().then(function(dbs) {
+                    return JSON.stringify(dbs.map(function(d) { return {name: d.name, version: d.version}; }));
+                }).catch(function(e) { return JSON.stringify({error: e.toString()}); });
+            })()
+        """.trimIndent()) { raw ->
+            activity?.runOnUiThread {
+                val clean = raw?.trim()?.removeSurrounding("\"")?.replace("\\\"","\"") ?: "[]"
+                try {
+                    val arr = org.json.JSONArray(clean)
+                    if (arr.length() == 0) {
+                        tvIdb.text = "Không có IndexedDB nào."
+                    } else {
+                        val sb = StringBuilder()
+                        for (i in 0 until arr.length()) {
+                            val obj = arr.getJSONObject(i)
+                            sb.appendLine("DB: ${obj.optString("name")}  v${obj.optInt("version")}")
+                        }
+                        tvIdb.text = sb.toString()
+                    }
+                } catch (_: Exception) { tvIdb.text = clean }
+            }
+        }
+
+        contentFrame.removeAllViews()
+        contentFrame.addView(sv)
+    }
+
+// ─────────────────────────────────────────────────────────────────────────
+    // D2: DOM Inspector Tab
+    // ─────────────────────────────────────────────────────────────────────────
+    private var selectedElementIndex = 0
+
+    private fun showDomTab() {
+        val ctx   = requireContext()
+        val outer = col(ctx)
+        val sv    = android.widget.ScrollView(ctx).apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(MATCH, MATCH)
+        }
+        val inner = col(ctx).apply { setPadding(12.dp, 8.dp, 12.dp, 16.dp) }
+        sv.addView(inner)
+
+        // ── Selector input ──
+        inner.addView(sectionHeader(ctx, "🌳 DOM Inspector"))
+        val etSel = editText(ctx, "CSS selector  (vd: video, .player, #app, [data-src])").apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 6.dp }
+        }
+        inner.addView(etSel)
+
+        // Quick selector presets
+        val presetRow = row(ctx)
+        listOf("video","audio","iframe","[src]","[data-src]","img").forEach { sel ->
+            presetRow.addView(btn(ctx, sel, "#1A1A1A", "#90CAF9").apply {
+                textSize = 9f; setPadding(6.dp, 4.dp, 6.dp, 4.dp)
+                setOnClickListener { etSel.setText(sel); inspectSelector(sel, inner, sv) }
+            })
+        }
+        inner.addView(presetRow)
+
+        // ── Inspect button ──
+        val btnInspect = btn(ctx, "🔍 Inspect", "#1A2A1A", "#4CAF50").apply {
+            setOnClickListener { inspectSelector(etSel.text.toString().trim(), inner, sv) }
+        }
+        // ── DOM Tree button ──
+        val btnTree = btn(ctx, "🌲 Full DOM", "#1A1A2A", "#64B5F6").apply {
+            setOnClickListener { showDomTree() }
+        }
+        inner.addView(row(ctx).apply { addView(btnInspect); addView(btnTree) })
+
+        // Results area
+        val tvResults = tv(ctx, "", "#EFEFEF", 10f).apply {
+            typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
+        }
+        inner.addView(tvResults)
+
+        outer.addView(sv)
+        contentFrame.removeAllViews()
+        contentFrame.addView(outer)
+    }
+
+    private fun inspectSelector(sel: String, container: android.widget.LinearLayout, sv: android.widget.ScrollView) {
+        if (sel.isBlank()) return
+        val escapedSel = sel.replace("\"", "\\\"").replace("'", "\\'")
+        val js = """
+            (function() {
+                try {
+                    var els = Array.from(document.querySelectorAll("$escapedSel")).slice(0, 30);
+                    return JSON.stringify({
+                        count: document.querySelectorAll("$escapedSel").length,
+                        elements: els.map(function(el, idx) {
+                            var attrs = {};
+                            Array.from(el.attributes).forEach(function(a) { attrs[a.name] = a.value.substring(0, 200); });
+                            var rect = el.getBoundingClientRect();
+                            return {
+                                index: idx,
+                                tag: el.tagName.toLowerCase(),
+                                id: el.id,
+                                classes: el.className.toString().trim().split(' ').filter(function(c){ return c; }),
+                                attrs: attrs,
+                                text: el.innerText ? el.innerText.trim().substring(0, 100) : '',
+                                src: el.src || el.getAttribute('src') || el.getAttribute('data-src') || '',
+                                href: el.href || '',
+                                visible: el.offsetParent !== null,
+                                rect: {w: Math.round(rect.width), h: Math.round(rect.height)}
+                            };
+                        })
+                    });
+                } catch(e) { return JSON.stringify({error: e.toString()}); }
+            })()
+        """.trimIndent()
+
+        webView.evaluateJavascript(js) { raw ->
+            activity?.runOnUiThread {
+                try {
+                    val clean = raw?.trim()?.removeSurrounding("\"")
+                        ?.replace("\\\"","\"")?.replace("\\n","")?.replace("\\\\","\\") ?: ""
+                    val json  = org.json.JSONObject(clean)
+                    if (json.has("error")) { showInDom(container, "Error: ${json.getString("error")}"); return@runOnUiThread }
+                    val count = json.getInt("count")
+                    val els   = json.getJSONArray("elements")
+                    // Remove old results (keep header + presets + buttons)
+                    while (container.childCount > 4) container.removeViewAt(container.childCount - 1)
+                    container.addView(sectionHeader(requireContext(), "Found $count elements (showing ${els.length()})"))
+                    for (i in 0 until els.length()) {
+                        val el   = els.getJSONObject(i)
+                        val tag  = el.optString("tag")
+                        val id   = el.optString("id").let { if (it.isNotBlank()) "#$it" else "" }
+                        val cls  = el.optJSONArray("classes")?.let { arr ->
+                            (0 until arr.length()).map { j -> ".${arr.getString(j)}" }.take(3).joinToString("")
+                        } ?: ""
+                        val src  = el.optString("src")
+                        val text = el.optString("text")
+                        val vis  = el.optBoolean("visible")
+                        val rect = el.optJSONObject("rect")
+                        container.addView(buildElementCard(requireContext(), el, i, "$tag$id$cls", src, text, vis, rect))
+                    }
+                    sv.post { sv.fullScroll(android.widget.ScrollView.FOCUS_DOWN) }
+                } catch (e: Exception) { showInDom(container, "Parse error: ${e.message}") }
+            }
+        }
+    }
+
+    private fun buildElementCard(ctx: Context, el: org.json.JSONObject, idx: Int,
+                                  label: String, src: String, text: String,
+                                  visible: Boolean, rect: org.json.JSONObject?): android.view.View {
+        val card = col(ctx, "#141414").apply {
+            setPadding(8.dp, 6.dp, 8.dp, 6.dp)
+            layoutParams = android.widget.LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 4.dp }
+        }
+        val visIcon = if (visible) "👁" else "🙈"
+        val size    = rect?.let { "${it.optInt("w")}×${it.optInt("h")}" } ?: ""
+        card.addView(tv(ctx, "[$idx] $visIcon $label  $size", "#4CAF50", 11f).apply {
+            typeface = android.graphics.Typeface.MONOSPACE
+        })
+        if (src.isNotBlank()) card.addView(tv(ctx, "src: ${src.take(80)}", "#64B5F6", 10f).apply {
+            setTextIsSelectable(true)
+        })
+        if (text.isNotBlank()) card.addView(tv(ctx, "text: $text", "#AAAAAA", 10f))
+
+        // Attributes
+        val attrs = el.optJSONObject("attrs")
+        if (attrs != null && attrs.length() > 0) {
+            val attrStr = attrs.keys().asSequence().take(6).joinToString("  ") { k ->
+                "$k=\"${attrs.optString(k).take(30)}\""
+            }
+            card.addView(tv(ctx, attrStr, "#888888", 9f).apply { typeface = android.graphics.Typeface.MONOSPACE })
+        }
+
+        // Actions
+        val actionRow = row(ctx)
+        val btnHighlight = btn(ctx, "✨ Highlight", "#1A2A1A", "#4CAF50").apply {
+            setOnClickListener {
+                val js = """
+                    (function(){
+                        var el = document.querySelectorAll("${el.optString("tag")}")[${idx}];
+                        if (!el) return;
+                        el.style.outline='4px solid #1D9E75';
+                        el.scrollIntoView({behavior:'smooth', block:'center'});
+                        setTimeout(function(){ el.style.outline=''; }, 3000);
+                    })()
+                """.trimIndent()
+                webView.evaluateJavascript(js, null)
+            }
+        }
+        if (src.isNotBlank()) {
+            val btnCopySrc = btn(ctx, "Copy src", "#1A1A1A").apply {
+                setOnClickListener { copy(src) }
+            }
+            actionRow.addView(btnCopySrc)
+        }
+        actionRow.addView(btnHighlight)
+        val btnEdit = btn(ctx, "✏ Edit attr", "#1A1A2A", "#90CAF9").apply {
+            setOnClickListener { showEditAttrDialog(el, idx) }
+        }
+        actionRow.addView(btnEdit)
+        card.addView(actionRow)
+        return card
+    }
+
+    private fun showEditAttrDialog(el: org.json.JSONObject, idx: Int) {
+        val ctx  = requireContext()
+        val tag  = el.optString("tag")
+        val etAttr  = editText(ctx, "Attribute name (vd: src, style, class)")
+        val etValue = editText(ctx, "New value")
+        val col2 = col(ctx).apply {
+            setPadding(16.dp, 8.dp, 16.dp, 8.dp)
+            addView(tv(ctx, "Element: <$tag> [$idx]", "#EFEFEF", 11f))
+            addView(etAttr); addView(etValue)
+        }
+        AlertDialog.Builder(ctx).setTitle("✏ Edit Attribute").setView(col2)
+            .setPositiveButton("Apply") { _, _ ->
+                val attr = etAttr.text.toString().trim().replace("\"","\\\"")
+                val value = etValue.text.toString().trim().replace("\"","\\\"").replace("'","\\'")
+                val js = """(function(){
+                    var el = document.querySelectorAll("$tag")[$idx];
+                    if (el) { el.setAttribute("$attr", "$value"); return "ok"; } return "not found";
+                })()""".trimIndent()
+                webView.evaluateJavascript(js) { res ->
+                    activity?.runOnUiThread { Toast.makeText(ctx, "Result: $res", Toast.LENGTH_SHORT).show() }
+                }
+            }
+            .setNegativeButton("Đóng", null).show()
+    }
+
+    private fun showDomTree() {
+        val js = """
+            (function() {
+                function tree(el, depth) {
+                    if (depth > 4 || !el) return '';
+                    var tag = el.tagName ? el.tagName.toLowerCase() : '';
+                    if (!tag) return '';
+                    var id  = el.id ? '#'+el.id : '';
+                    var cls = el.className ? '.'+el.className.toString().split(' ')[0] : '';
+                    var pad = '  '.repeat(depth);
+                    var ch  = Array.from(el.children).slice(0,6).map(function(c){ return tree(c, depth+1); }).join('');
+                    return pad + '<' + tag + id + cls + '>\n' + ch;
+                }
+                return tree(document.body, 0).substring(0, 8000);
+            })()
+        """.trimIndent()
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"")?.replace("\\n","\n")?.replace("\\\"","\"") ?: ""
+            activity?.runOnUiThread { showCodeDialog(requireContext(), "DOM Tree", clean) }
+        }
+    }
+
+    private fun showInDom(container: android.widget.LinearLayout, msg: String) {
+        container.addView(tv(requireContext(), msg, "#E57373", 11f))
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // J2: HTTP Proxy Tab
+    // ─────────────────────────────────────────────────────────────────────────
+    private fun showProxyTab() {
+        val ctx   = requireContext()
+        val inner = col(ctx).apply { setPadding(12.dp, 8.dp, 12.dp, 16.dp) }
+        val sv    = android.widget.ScrollView(ctx).apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(MATCH, MATCH)
+            addView(inner)
+        }
+
+        inner.addView(sectionHeader(ctx, "🌐 HTTP Proxy (J2)"))
+        inner.addView(tv(ctx, "Ảnh hưởng đến OkHttp (response fetch). WebView cần cấu hình thêm.", "#888", 10f).apply {
+            setPadding(0, 0, 0, 8.dp)
+        })
+
+        val etHost = editText(ctx, "Proxy host (vd: 192.168.1.100)").apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 6.dp }
+        }
+        val etPort = editText(ctx, "Port (vd: 8888)").apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            layoutParams = android.widget.LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 8.dp }
+        }
+        inner.addView(etHost)
+        inner.addView(etPort)
+
+        // Current proxy status
+        val currentHost = System.getProperty("http.proxyHost") ?: ""
+        val currentPort = System.getProperty("http.proxyPort") ?: ""
+        val tvStatus = tv(ctx,
+            if (currentHost.isNotBlank()) "Current: $currentHost:$currentPort" else "Proxy: OFF",
+            if (currentHost.isNotBlank()) "#4CAF50" else "#888888", 11f
+        ).apply { setPadding(0, 0, 0, 8.dp) }
+        inner.addView(tvStatus)
+
+        val btnSet = btn(ctx, "✅ Set Proxy", "#1A2A1A", "#4CAF50").apply {
+            setOnClickListener {
+                val host = etHost.text.toString().trim()
+                val port = etPort.text.toString().trim().toIntOrNull() ?: 0
+                (activity as? com.aho.streambrowser.ui.MainActivity)?.setHttpProxy(host, port)
+                tvStatus.text = if (host.isNotBlank()) "Current: $host:$port" else "Proxy: OFF"
+                tvStatus.setTextColor(android.graphics.Color.parseColor(if (host.isNotBlank()) "#4CAF50" else "#888888"))
+            }
+        }
+        val btnClear = btn(ctx, "🗑 Clear Proxy", "#2A1A1A", "#E57373").apply {
+            setOnClickListener {
+                etHost.setText(""); etPort.setText("")
+                (activity as? com.aho.streambrowser.ui.MainActivity)?.setHttpProxy("", 0)
+                tvStatus.text = "Proxy: OFF"
+                tvStatus.setTextColor(android.graphics.Color.parseColor("#888888"))
+            }
+        }
+        inner.addView(row(ctx).apply { addView(btnSet); addView(btnClear) })
+
+        inner.addView(divider(ctx).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(MATCH, 1).apply { topMargin = 12.dp; bottomMargin = 12.dp }
+        })
+        inner.addView(sectionHeader(ctx, "Charles / Burp Quick Setup"))
+        inner.addView(tv(ctx, """1. Mở Charles/Burp trên máy tính
+2. Lấy IP máy tính (cùng WiFi với điện thoại)
+3. Charles port mặc định: 8888 | Burp: 8080
+4. Nhập host+port ở trên → Set Proxy
+5. Cài Charles/Burp SSL cert vào điện thoại
+6. Bật SSL bypass (tab Network → 🔒 SSL)""", "#EFEFEF", 11f).apply {
+            typeface = android.graphics.Typeface.MONOSPACE
+        })
+
+        inner.addView(divider(ctx).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(MATCH, 1).apply { topMargin = 12.dp; bottomMargin = 12.dp }
+        })
+        inner.addView(sectionHeader(ctx, "WebView Proxy (via reflection)"))
+        inner.addView(tv(ctx, "Áp dụng proxy trực tiếp cho WebView (Android 5+).", "#888", 10f).apply { setPadding(0,0,0,6.dp) })
+        val btnWebViewProxy = btn(ctx, "🔧 Apply to WebView", "#1A1A2A", "#64B5F6").apply {
+            setOnClickListener {
+                val host = etHost.text.toString().trim()
+                val port = etPort.text.toString().trim().toIntOrNull() ?: 0
+                if (host.isBlank()) { Toast.makeText(ctx, "Nhập host trước", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
+                applyWebViewProxy(host, port)
+            }
+        }
+        inner.addView(btnWebViewProxy)
+
+        contentFrame.removeAllViews()
+        contentFrame.addView(sv)
+    }
+
+    private fun applyWebViewProxy(host: String, port: Int) {
+        val ctx = requireContext()
+        try {
+            val contentResolver = ctx.contentResolver
+            android.provider.Settings.Global.putString(contentResolver, android.provider.Settings.Global.HTTP_PROXY, "$host:$port")
+            Toast.makeText(ctx, "WebView proxy applied: $host:$port\n(may need restart)", Toast.LENGTH_LONG).show()
+        } catch (e: SecurityException) {
+            // Fallback: reflection approach
+            try {
+                val clazz  = Class.forName("android.webkit.WebViewDatabase")
+                val method = clazz.getDeclaredMethod("getInstance", Context::class.java)
+                method.isAccessible = true
+                Toast.makeText(ctx, "⚠ Cần WRITE_SETTINGS permission để set WebView proxy", Toast.LENGTH_LONG).show()
+            } catch (_: Exception) {
+                Toast.makeText(ctx, "Set HTTPS_PROXY env và restart app", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
 }

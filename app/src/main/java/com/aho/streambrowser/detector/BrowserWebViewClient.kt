@@ -16,6 +16,19 @@ class BrowserWebViewClient(
     private val onPageFinished: (url: String) -> Unit
 ) : WebViewClient() {
 
+    /** J1: SSL certificate error bypass (dev/reverse-engineering use only) */
+    var sslBypassEnabled = false
+
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun onReceivedSslError(view: WebView, handler: android.net.http.SslErrorHandler, error: android.net.http.SslError) {
+        if (sslBypassEnabled) {
+            handler.proceed()
+        } else {
+            super.onReceivedSslError(view, handler, error)
+        }
+    }
+
+
     private var currentUrl  = ""
     private var previousUrl = ""          // FIX: track previous URL separately
     private var isDestroyed = false

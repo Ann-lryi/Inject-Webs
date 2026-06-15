@@ -43,7 +43,6 @@
                     android:scaleType="center" android:contentDescription="Forward"
                     android:layout_marginStart="2dp"/>
 
-                <!-- URL bar -->
                 <LinearLayout
                     android:layout_width="0dp" android:layout_height="36dp"
                     android:layout_weight="1"
@@ -61,14 +60,11 @@
                     <EditText android:id="@+id/etUrl"
                         android:layout_width="0dp" android:layout_height="match_parent"
                         android:layout_weight="1"
-                        android:background="@null"
-                        android:inputType="textUri"
+                        android:background="@null" android:inputType="textUri"
                         android:imeOptions="actionGo|flagNoExtractUi"
-                        android:singleLine="true"
-                        android:textSize="11.5sp" android:textColor="#E0E0E0"
-                        android:hint="Tìm kiếm hoặc nhập URL"
-                        android:textColorHint="#555"
-                        android:selectAllOnFocus="true"/>
+                        android:singleLine="true" android:textSize="11.5sp"
+                        android:textColor="#E0E0E0" android:hint="Tìm kiếm hoặc nhập URL"
+                        android:textColorHint="#555" android:selectAllOnFocus="true"/>
 
                     <ImageButton android:id="@+id/btnRefresh"
                         android:layout_width="30dp" android:layout_height="30dp"
@@ -77,13 +73,12 @@
                         android:scaleType="center" android:contentDescription="Reload"/>
                 </LinearLayout>
 
-                <!-- Desktop mode toggle -->
                 <ImageButton android:id="@+id/btnDesktop"
                     android:layout_width="38dp" android:layout_height="38dp"
                     android:src="@drawable/ic_home"
                     android:background="@drawable/bg_icon_btn"
                     android:alpha="0.5"
-                    android:scaleType="center" android:contentDescription="Desktop mode"/>
+                    android:scaleType="center" android:contentDescription="Desktop"/>
 
                 <ImageButton android:id="@+id/btnBookmark"
                     android:layout_width="38dp" android:layout_height="38dp"
@@ -94,6 +89,26 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- F2: Tab strip -->
+        <HorizontalScrollView
+            android:id="@+id/tabScrollView"
+            android:layout_width="match_parent"
+            android:layout_height="32dp"
+            android:background="#0F0F0F"
+            android:scrollbars="none"
+            android:overScrollMode="never"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/tabStrip"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="4dp"/>
+
+        </HorizontalScrollView>
+
         <!-- Progress -->
         <ProgressBar android:id="@+id/progressBar"
             style="@style/Widget.AppCompat.ProgressBar.Horizontal"
@@ -101,7 +116,7 @@
             android:max="100" android:progressTint="#1D9E75"
             android:progressBackgroundTint="#1A1A1A" android:visibility="gone"/>
 
-        <!-- SwipeRefresh wrapping WebView (F3) -->
+        <!-- SwipeRefresh + WebView -->
         <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
             android:id="@+id/swipeRefresh"
             android:layout_width="match_parent"
@@ -117,7 +132,6 @@
 
     </LinearLayout>
 
-    <!-- DevTools FAB -->
     <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
         android:id="@+id/btnDevTools"
         android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -126,7 +140,6 @@
         app:icon="@drawable/ic_devtools" app:iconTint="#FFF"
         app:backgroundTint="#1D9E75" app:elevation="8dp"/>
 
-    <!-- Picker FAB -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/btnPickerFloat"
         android:layout_width="wrap_content" android:layout_height="wrap_content"
