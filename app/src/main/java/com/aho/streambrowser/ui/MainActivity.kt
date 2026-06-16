@@ -8,7 +8,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.graphics.Color
 import android.net.Uri
 import android.os.Build
@@ -16,20 +15,23 @@ import android.os.Bundle
 import android.os.Environment
 import android.util.Rational
 import android.view.KeyEvent
-import android.view.LayoutInflater
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
 import android.webkit.WebSettings
-import android.widget.*
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
+import androidx.lifecycle.lifecycleScope
 import com.aho.streambrowser.databinding.ActivityMainBinding
 import com.aho.streambrowser.detector.BrowserChromeClient
 import com.aho.streambrowser.detector.BrowserWebViewClient
@@ -37,16 +39,21 @@ import com.aho.streambrowser.detector.StreamDetector
 import com.aho.streambrowser.detector.StreamJsBridge
 import com.aho.streambrowser.model.StreamItem
 import com.aho.streambrowser.model.TabManager
-import com.aho.streambrowser.model.TabModel
-import com.aho.streambrowser.util.BookmarkManager
 import com.aho.streambrowser.util.Constants
 import com.aho.streambrowser.util.RequestBlocker
 import com.aho.streambrowser.util.UserAgentManager
+import com.aho.streambrowser.viewmodel.BrowserViewModel
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.launch
 
+@AndroidEntryPoint
 class MainActivity : AppCompatActivity() {
 
     private lateinit var b: ActivityMainBinding
     private var webViewClient: BrowserWebViewClient? = null
+
+    // H2: ViewModel injected by Hilt
+    private val vm: BrowserViewModel by viewModels()
 
     val detector      by lazy { StreamDetector(this) }
     private val blocker by lazy { RequestBlocker(this) }
@@ -80,12 +87,31 @@ class MainActivity : AppCompatActivity() {
         setupButtons()
         setupBackHandler()
         setupDetector()
+        observeViewModel()    // H2: observe StateFlow
         renderTabStrip()
 
         b.webView.loadUrl(Constants.DEFAULT_HOME_URL)
     }
 
-    // ── Back handler ──────────────────────────────────────────────────────────
+    // H2: Observe StateFlow from ViewModel
+    private fun observeViewModel() {
+        lifecycleScope.launch {
+            vm.bookmarks.collect { bookmarks ->
+                val url = b.webView.url ?: return@collect
+                val isBookmarked = bookmarks.any { it.url == url }
+                b.btnBookmark.setImageResource(
+                    if (isBookmarked) R.drawable.ic_bookmark_filled else R.drawable.ic_bookmark
+                )
+            }
+        }
+        // Auto-save streams to history via ViewModel
+        detector.onStreamFound = { stream ->
+            vm.saveStream(stream)
+            runOnUiThread { updateFab() }
+        }
+        detector.onRequestAdded = { runOnUiThread { updateFab() } }
+    }
+
     private fun setupBackHandler() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -160,30 +186,34 @@ class MainActivity : AppCompatActivity() {
             if (hasFocus) v.post { b.etUrl.selectAll() } else hideKeyboard()
         }
         b.etUrl.setOnLongClickListener {
-            copyToClipboard(b.webView.url ?: return@setOnLongClickListener false, "Đã copy URL")
-            true
+            copyToClipboard(b.webView.url ?: return@setOnLongClickListener false, "Đã copy URL"); true
         }
     }
 
     private fun setupButtons() {
         b.btnBack.setOnClickListener    { if (b.webView.canGoBack())    b.webView.goBack()    }
         b.btnForward.setOnClickListener { if (b.webView.canGoForward()) b.webView.goForward() }
-        b.btnBack.setOnLongClickListener { b.webView.clearHistory(); updateNavButtons(); true }
+        b.btnBack.setOnLongClickListener {
+            b.webView.clearHistory(); updateNavButtons()
+            Toast.makeText(this, "Đã xoá history điều hướng", Toast.LENGTH_SHORT).show(); true
+        }
         b.btnRefresh.setOnClickListener {
             if (b.progressBar.isVisible) b.webView.stopLoading() else b.webView.reload()
         }
         b.btnDesktop.setOnClickListener    { toggleDesktopMode() }
         b.btnDesktop.setOnLongClickListener { toggleIncognito(); true }
+
+        // H2: Bookmark uses ViewModel
         b.btnBookmark.setOnClickListener {
             val url = b.webView.url ?: return@setOnClickListener
-            if (BookmarkManager.isBookmarked(this, url)) {
-                BookmarkManager.removeBookmark(this, url)
-                b.btnBookmark.setImageResource(R.drawable.ic_bookmark)
-                Toast.makeText(this, "Đã xoá bookmark", Toast.LENGTH_SHORT).show()
-            } else {
-                BookmarkManager.addBookmark(this, url, b.webView.title ?: url)
-                b.btnBookmark.setImageResource(R.drawable.ic_bookmark_filled)
-                Toast.makeText(this, "Đã lưu bookmark", Toast.LENGTH_SHORT).show()
+            lifecycleScope.launch {
+                if (vm.isBookmarked(url)) {
+                    vm.removeBookmark(url)
+                    Toast.makeText(this@MainActivity, "Đã xoá bookmark", Toast.LENGTH_SHORT).show()
+                } else {
+                    vm.addBookmark(url, b.webView.title ?: url)
+                    Toast.makeText(this@MainActivity, "Đã lưu bookmark", Toast.LENGTH_SHORT).show()
+                }
             }
         }
         b.btnBookmark.setOnLongClickListener { showBookmarkHistory(); true }
@@ -193,100 +223,77 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupDetector() {
-        detector.onStreamFound  = { runOnUiThread { updateFab() } }
-        detector.onRequestAdded = { runOnUiThread { updateFab() } }
+        // onStreamFound and onRequestAdded set in observeViewModel()
     }
 
-    // ── F2: Multi-tab ─────────────────────────────────────────────────────────
+    // ── F2: Multi-tab ──────────────────────────────────────────────────────────
     private fun renderTabStrip() {
-        val strip = b.tabStrip
-        strip.removeAllViews()
+        val strip = b.tabStrip; strip.removeAllViews()
         val dp = resources.displayMetrics.density
-
         tabManager.tabs.forEachIndexed { idx, tab ->
             val isCurrent = idx == tabManager.currentIdx
             val chip = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity     = android.view.Gravity.CENTER_VERTICAL
-                setPadding((8 * dp).toInt(), 0, (4 * dp).toInt(), 0)
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.MATCH_PARENT
-                ).apply { marginEnd = (2 * dp).toInt() }
+                setPadding((8*dp).toInt(), 0, (4*dp).toInt(), 0)
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = (2*dp).toInt() }
                 setBackgroundColor(if (isCurrent) Color.parseColor("#1D9E75") else Color.parseColor("#1E1E1E"))
                 setOnClickListener { switchTab(idx) }
             }
             val label = TextView(this).apply {
-                text     = tab.title.take(16).ifBlank { tab.url.take(20).removePrefix("https://").removePrefix("http://") }
+                text     = tab.title.take(14).ifBlank { tab.url.take(16).removePrefix("https://").removePrefix("http://") }
                 textSize = 10f
                 setTextColor(if (isCurrent) Color.WHITE else Color.parseColor("#AAAAAA"))
                 maxLines = 1
             }
-            val close = ImageButton(this).apply {
-                setImageResource(R.drawable.ic_close)
-                background    = null
-                layoutParams  = LinearLayout.LayoutParams((20 * dp).toInt(), (20 * dp).toInt())
+            val close = android.widget.ImageButton(this).apply {
+                setImageResource(R.drawable.ic_close); background = null
+                layoutParams = LinearLayout.LayoutParams((20*dp).toInt(), (20*dp).toInt())
                 setColorFilter(if (isCurrent) Color.WHITE else Color.parseColor("#888888"))
                 setOnClickListener { closeTab(idx) }
             }
-            chip.addView(label); chip.addView(close)
-            strip.addView(chip)
+            chip.addView(label); chip.addView(close); strip.addView(chip)
         }
-        // "+" button
         val addBtn = TextView(this).apply {
-            text      = " + "
-            textSize  = 14f
-            setTextColor(Color.parseColor("#1D9E75"))
-            gravity   = android.view.Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                (32 * dp).toInt(), LinearLayout.LayoutParams.MATCH_PARENT
-            )
+            text = " + "; textSize = 14f
+            setTextColor(Color.parseColor("#1D9E75")); gravity = android.view.Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams((32*dp).toInt(), LinearLayout.LayoutParams.MATCH_PARENT)
             setOnClickListener { openNewTab() }
             setOnLongClickListener { showTabManager(); true }
         }
         strip.addView(addBtn)
-
-        // Show/hide tab strip (show if > 1 tab)
         b.tabScrollView.isVisible = tabManager.count > 1
     }
 
     fun openNewTab(url: String = "about:blank") {
-        detector.clear()
-        tabManager.newTab(url)
-        b.webView.loadUrl(url)
-        updateFab()
-        renderTabStrip()
+        detector.clear(); tabManager.newTab(url)
+        b.webView.loadUrl(url); updateFab(); renderTabStrip()
     }
 
     private fun switchTab(idx: Int) {
         tabManager.updateCurrent(b.webView.url ?: "", b.webView.title ?: "")
         val tab = tabManager.switchTo(idx)
-        detector.clear()
-        b.webView.loadUrl(tab.url.ifBlank { "about:blank" })
+        detector.clear(); b.webView.loadUrl(tab.url.ifBlank { "about:blank" })
         if (!b.etUrl.isFocused) b.etUrl.setText(tab.url)
         updateFab(); renderTabStrip()
     }
 
     private fun closeTab(idx: Int) {
-        tabManager.close(idx)
-        val current = tabManager.current
-        detector.clear()
-        b.webView.loadUrl(current.url.ifBlank { "about:blank" })
-        if (!b.etUrl.isFocused) b.etUrl.setText(current.url)
+        tabManager.close(idx); val cur = tabManager.current
+        detector.clear(); b.webView.loadUrl(cur.url.ifBlank { "about:blank" })
+        if (!b.etUrl.isFocused) b.etUrl.setText(cur.url)
         updateFab(); renderTabStrip()
     }
 
     private fun showTabManager() {
-        val tabs  = tabManager.tabs
-        val names = tabs.mapIndexed { i, t ->
-            "${if (i == tabManager.currentIdx) "▶ " else "   "}${t.title.take(40).ifBlank { t.url.take(40) }}"
-        }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle("Tabs (${tabs.size})")
-            .setItems(names) { _, i -> switchTab(i) }
+        val tabs = tabManager.tabs
+        AlertDialog.Builder(this).setTitle("Tabs (${tabs.size})")
+            .setItems(tabs.mapIndexed { i, t ->
+                "${if (i == tabManager.currentIdx) "▶ " else "   "}${t.title.take(40).ifBlank { t.url.take(40) }}"
+            }.toTypedArray()) { _, i -> switchTab(i) }
             .setPositiveButton("+ New Tab") { _, _ -> openNewTab() }
-            .setNegativeButton("Đóng", null)
-            .show()
+            .setNegativeButton("Đóng", null).show()
     }
 
     // ── Navigation ────────────────────────────────────────────────────────────
@@ -295,8 +302,7 @@ class MainActivity : AppCompatActivity() {
         val url = when {
             t.startsWith("http://") || t.startsWith("https://") -> t
             t.startsWith("about:") || t.startsWith("data:")     -> t
-            !t.contains(" ") && t.contains(".") &&
-            t.substringAfterLast(".").length in 2..6            -> "https://$t"
+            !t.contains(" ") && t.contains(".") && t.substringAfterLast(".").length in 2..6 -> "https://$t"
             else -> "https://www.google.com/search?q=${Uri.encode(t)}"
         }
         b.webView.loadUrl(url); b.etUrl.clearFocus(); hideKeyboard()
@@ -308,13 +314,8 @@ class MainActivity : AppCompatActivity() {
         b.btnRefresh.setImageResource(R.drawable.ic_close)
         b.swipeRefresh.isRefreshing = false
         b.ivSecure.alpha = if (url.startsWith("https")) 1f else 0.4f
-        b.btnBookmark.setImageResource(
-            if (BookmarkManager.isBookmarked(this, url)) R.drawable.ic_bookmark_filled
-            else R.drawable.ic_bookmark
-        )
         updateNavButtons()
-        tabManager.updateCurrent(url, "Loading…")
-        renderTabStrip()
+        tabManager.updateCurrent(url, "Loading…"); renderTabStrip()
     }
 
     private fun pageFinished(url: String) {
@@ -323,9 +324,9 @@ class MainActivity : AppCompatActivity() {
         b.btnRefresh.setImageResource(R.drawable.ic_refresh)
         b.swipeRefresh.isRefreshing = false
         updateNavButtons()
-        BookmarkManager.addHistory(this, url, b.webView.title ?: url)
-        tabManager.updateCurrent(url, b.webView.title ?: url)
-        renderTabStrip()
+        // H2: history via ViewModel
+        vm.updatePage(url, b.webView.title ?: url)
+        tabManager.updateCurrent(url, b.webView.title ?: url); renderTabStrip()
     }
 
     private fun updateProgress(p: Int) {
@@ -334,10 +335,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateNavButtons() {
-        b.btnBack.isEnabled    = b.webView.canGoBack()
-        b.btnBack.alpha        = if (b.webView.canGoBack()) 1f else 0.3f
-        b.btnForward.isEnabled = b.webView.canGoForward()
-        b.btnForward.alpha     = if (b.webView.canGoForward()) 1f else 0.3f
+        b.btnBack.isEnabled    = b.webView.canGoBack();    b.btnBack.alpha    = if (b.webView.canGoBack()) 1f else 0.3f
+        b.btnForward.isEnabled = b.webView.canGoForward(); b.btnForward.alpha = if (b.webView.canGoForward()) 1f else 0.3f
     }
 
     private fun updateFab() {
@@ -347,7 +346,7 @@ class MainActivity : AppCompatActivity() {
                else -> { b.btnDevTools.text="DevTools"; b.btnDevTools.shrink() } }
     }
 
-    // ── F6+J3+F10 ─────────────────────────────────────────────────────────────
+    // ── Extras ────────────────────────────────────────────────────────────────
     private fun toggleDesktopMode() {
         isDesktopMode = !isDesktopMode
         b.webView.settings.userAgentString = if (isDesktopMode)
@@ -380,14 +379,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun showQuickActions() {
         val streams = detector.streams
-        val items   = mutableListOf<String>(); val actions = mutableListOf<() -> Unit>()
+        val items = mutableListOf<String>(); val actions = mutableListOf<() -> Unit>()
         streams.firstOrNull()?.url?.let { u -> items.add("📋 Copy last stream"); actions.add { copyToClipboard(u,"Copied") } }
         if (streams.isNotEmpty()) { items.add("⚙ Export cURLs"); actions.add {
-            copyToClipboard(streams.take(5).joinToString("\n") { "curl \"${it.url}\" -H \"Referer: ${it.referer}\"" }, "cURLs copied")
+            copyToClipboard(streams.take(5).joinToString("\n") { "curl \"${it.url}\" -H \"Referer: ${it.referer}\"" },"cURLs copied")
         }}
         items.add("+ New Tab"); actions.add { openNewTab() }
         items.add("📑 All Tabs"); actions.add { showTabManager() }
-        items.add("🗑 Clear Session"); actions.add { detector.clear(); updateFab(); Toast.makeText(this,"Cleared",Toast.LENGTH_SHORT).show() }
+        items.add("🗑 Clear Session"); actions.add { detector.clear(); updateFab() }
         items.add(if (isIncognito) "🔓 Exit Incognito" else "🕵 Incognito"); actions.add { toggleIncognito() }
         items.add(if (isDesktopMode) "📱 Mobile" else "🖥 Desktop"); actions.add { toggleDesktopMode() }
         AlertDialog.Builder(this).setTitle("Quick Actions")
@@ -395,23 +394,20 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("Đóng", null).show()
     }
 
-    /** J1: SSL bypass — called from DevToolsSheet */
     fun setSslBypass(enabled: Boolean) {
         webViewClient?.sslBypassEnabled = enabled
-        Toast.makeText(this, if (enabled) "⚠ SSL bypass ON" else "SSL bypass OFF", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, if (enabled) "⚠ SSL bypass ON" else "SSL OFF", Toast.LENGTH_SHORT).show()
     }
 
-    /** J2: HTTP Proxy — sets system properties for OkHttp calls */
     fun setHttpProxy(host: String, port: Int) {
         if (host.isBlank() || port <= 0) {
-            System.clearProperty("http.proxyHost"); System.clearProperty("http.proxyPort")
-            System.clearProperty("https.proxyHost"); System.clearProperty("https.proxyPort")
-            Toast.makeText(this, "Proxy cleared", Toast.LENGTH_SHORT).show()
+            listOf("http.proxyHost","http.proxyPort","https.proxyHost","https.proxyPort")
+                .forEach { System.clearProperty(it) }
         } else {
             System.setProperty("http.proxyHost", host);  System.setProperty("http.proxyPort", port.toString())
             System.setProperty("https.proxyHost", host); System.setProperty("https.proxyPort", port.toString())
-            Toast.makeText(this, "Proxy set: $host:$port", Toast.LENGTH_SHORT).show()
         }
+        Toast.makeText(this, if (host.isBlank()) "Proxy cleared" else "Proxy: $host:$port", Toast.LENGTH_SHORT).show()
     }
 
     private fun openDevTools() {
@@ -426,25 +422,29 @@ class MainActivity : AppCompatActivity() {
     private fun downloadFile(url: String, ua: String, cd: String, mime: String) {
         try {
             val fn = android.webkit.URLUtil.guessFileName(url, cd, mime)
-            val req = DownloadManager.Request(Uri.parse(url)).apply {
-                setMimeType(mime); addRequestHeader("User-Agent", ua)
-                addRequestHeader("Referer", b.webView.url ?: "")
-                setTitle(fn); setDescription("Đang tải $fn")
-                setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fn)
-            }
-            (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(req)
+            (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(
+                DownloadManager.Request(Uri.parse(url)).apply {
+                    setMimeType(mime); addRequestHeader("User-Agent", ua)
+                    addRequestHeader("Referer", b.webView.url ?: "")
+                    setTitle(fn); setDescription("Tải $fn")
+                    setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                    setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fn)
+                })
             Toast.makeText(this, "⬇ $fn", Toast.LENGTH_LONG).show()
-        } catch (_: Exception) { copyToClipboard(url, "⬇ URL copied (download failed)") }
+        } catch (_: Exception) { copyToClipboard(url, "⬇ URL copied") }
     }
 
     private fun showBookmarkHistory() {
-        val entries = BookmarkManager.getBookmarks(this) + BookmarkManager.getHistory(this)
-        if (entries.isEmpty()) { Toast.makeText(this,"Chưa có dữ liệu",Toast.LENGTH_SHORT).show(); return }
-        AlertDialog.Builder(this).setTitle("Bookmark & History")
-            .setItems(entries.map { (if (it.isBookmark) "★ " else "   ") + it.title.take(55) }.toTypedArray()) { _, i -> navigateTo(entries[i].url) }
-            .setNeutralButton("Xoá History") { _,_ -> BookmarkManager.clearHistory(this); Toast.makeText(this,"Đã xoá",Toast.LENGTH_SHORT).show() }
-            .setNegativeButton("Đóng", null).show()
+        lifecycleScope.launch {
+            val entries = vm.bookmarks.value + vm.history.value
+            if (entries.isEmpty()) { Toast.makeText(this@MainActivity,"Chưa có dữ liệu",Toast.LENGTH_SHORT).show(); return@launch }
+            runOnUiThread {
+                AlertDialog.Builder(this@MainActivity).setTitle("Bookmark & History")
+                    .setItems(entries.map { (if (it.isBookmark)"★ " else "   ")+it.title.take(55) }.toTypedArray()) { _,i -> navigateTo(entries[i].url) }
+                    .setNeutralButton("Xoá History") { _,_ -> vm.clearHistory() }
+                    .setNegativeButton("Đóng", null).show()
+            }
+        }
     }
 
     fun activatePicker() { b.btnPickerFloat.isVisible = true }
@@ -453,7 +453,7 @@ class MainActivity : AppCompatActivity() {
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(b.etUrl.windowToken, 0)
     }
 
-    private fun copyToClipboard(text: String, msg: String) {
+    fun copyToClipboard(text: String, msg: String) {
         (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
             .setPrimaryClip(ClipData.newPlainText("text", text))
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
@@ -461,9 +461,5 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause()   { super.onPause();   b.webView.onPause() }
     override fun onResume()  { super.onResume();  b.webView.onResume() }
-    override fun onDestroy() {
-        webViewClient?.cleanup(); webViewClient = null
-        b.webView.apply { stopLoading(); clearHistory(); destroy() }
-        super.onDestroy()
-    }
+    override fun onDestroy() { webViewClient?.cleanup(); b.webView.apply { stopLoading(); clearHistory(); destroy() }; super.onDestroy() }
 }

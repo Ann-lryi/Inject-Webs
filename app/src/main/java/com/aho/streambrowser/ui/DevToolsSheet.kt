@@ -35,6 +35,9 @@ import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.google.android.material.tabs.TabLayout
 import kotlinx.coroutines.*
 
+import dagger.hilt.android.AndroidEntryPoint
+
+@AndroidEntryPoint
 class DevToolsSheet(
     private val detector: StreamDetector,
     private val webView: WebView,
@@ -165,6 +168,7 @@ class DevToolsSheet(
         16 -> showSwIdbTab()
         17 -> showDomTab()
         18 -> showProxyTab()
+        19 -> showHistoryTab()
         else -> {}
     }
 
@@ -2435,6 +2439,80 @@ class NetworkAdapter(
                 Toast.makeText(ctx, "Set HTTPS_PROXY env và restart app", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+// ─────────────────────────────────────────────────────────────────────────
+    // H2: History Tab — powered by Room via ViewModel
+    // ─────────────────────────────────────────────────────────────────────────
+    private fun showHistoryTab() {
+        val ctx = requireContext()
+        val inner = col(ctx).apply { setPadding(12.dp, 8.dp, 12.dp, 16.dp) }
+        val sv = android.widget.ScrollView(ctx).apply {
+            layoutParams = android.widget.FrameLayout.LayoutParams(MATCH, MATCH)
+            addView(inner)
+        }
+        val vm = (activity as? com.aho.streambrowser.ui.MainActivity)?.let {
+            androidx.lifecycle.ViewModelProvider(it).get(com.aho.streambrowser.viewmodel.BrowserViewModel::class.java)
+        }
+        inner.addView(sectionHeader(ctx, "📚 Browsing History (Room DB)"))
+        val tvHist = tv(ctx, "Đang tải...", "#EFEFEF", 11f).apply { setTextIsSelectable(true) }
+        inner.addView(tvHist)
+        scope.launch {
+            val items = vm?.history?.value ?: emptyList()
+            post {
+                if (items.isEmpty()) { tvHist.text = "Chưa có history." }
+                else {
+                    inner.removeView(tvHist)
+                    items.take(50).forEach { entry ->
+                        val row2 = row(ctx, "#141414").apply {
+                            setPadding(8.dp, 6.dp, 8.dp, 6.dp)
+                            layoutParams = android.widget.LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 2.dp }
+                            setOnClickListener { (activity as? com.aho.streambrowser.ui.MainActivity)?.navigateTo(entry.url) }
+                        }
+                        val col2 = col(ctx)
+                        col2.addView(tv(ctx, entry.title.take(50), "#EFEFEF", 11f))
+                        col2.addView(tv(ctx, entry.url.take(60), "#666", 9f).apply { typeface = android.graphics.Typeface.MONOSPACE })
+                        row2.addView(col2.apply { layoutParams = android.widget.LinearLayout.LayoutParams(0, WRAP, 1f) })
+                        row2.addView(btn(ctx, "Copy", "#1A1A1A").apply {
+                            textSize = 9f; setOnClickListener { copy(entry.url) }
+                        })
+                        inner.addView(row2)
+                    }
+                }
+            }
+        }
+        inner.addView(divider(ctx).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(MATCH, 1).apply { topMargin = 12.dp; bottomMargin = 8.dp }
+        })
+        inner.addView(sectionHeader(ctx, "🎬 Stream History (Room DB)"))
+        scope.launch {
+            val streams = vm?.getRecentStreams() ?: emptyList()
+            post {
+                if (streams.isEmpty()) inner.addView(tv(ctx, "Chưa có stream history.", "#888", 11f))
+                else streams.take(30).forEach { s ->
+                    val card = col(ctx, "#141414").apply {
+                        setPadding(8.dp, 5.dp, 8.dp, 5.dp)
+                        layoutParams = android.widget.LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 3.dp }
+                    }
+                    card.addView(tv(ctx, "[${s.streamType}] ${s.url.take(70)}", "#4CAF50", 10f).apply {
+                        typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
+                    })
+                    card.addView(tv(ctx, "ref: ${s.referer.take(50)}", "#666", 9f))
+                    card.addView(btn(ctx, "Copy URL", "#1A2A1A", "#4CAF50").apply {
+                        setOnClickListener { copy(s.url) }
+                    })
+                    inner.addView(card)
+                }
+            }
+        }
+        inner.addView(btn(ctx, "🗑 Clear All History", "#2A1A1A", "#E57373").apply {
+            setOnClickListener {
+                vm?.clearHistory()
+                Toast.makeText(ctx, "History cleared", Toast.LENGTH_SHORT).show()
+            }
+        })
+        contentFrame.removeAllViews()
+        contentFrame.addView(sv)
     }
 
 }
