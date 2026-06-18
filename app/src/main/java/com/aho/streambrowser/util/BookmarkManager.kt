@@ -4,13 +4,6 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class BookmarkEntry(
-    val url: String,
-    val title: String,
-    val isBookmark: Boolean,   // false = history
-    val timestamp: Long = System.currentTimeMillis()
-)
-
 object BookmarkManager {
 
     private const val PREF   = "sb_bookmarks"

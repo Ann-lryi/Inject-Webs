@@ -1,98 +1,76 @@
-package com.aho.streambrowser.ui
+package com.aho.streambrowser.model
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.view.LayoutInflater
-import android.view.ViewGroup
-import android.widget.Toast
-import androidx.core.content.ContextCompat
-import androidx.recyclerview.widget.DiffUtil
-import androidx.recyclerview.widget.ListAdapter
-import androidx.recyclerview.widget.RecyclerView
-import com.aho.streambrowser.R
-import com.aho.streambrowser.databinding.ItemStreamBinding
-import com.aho.streambrowser.model.StreamItem
-import com.aho.streambrowser.model.StreamType
-
-class StreamAdapter(
-    private val onCopy:  (StreamItem) -> Unit,
-    private val onPlay:  (StreamItem) -> Unit,
-    private val onShare: (StreamItem) -> Unit
-) : ListAdapter<StreamItem, StreamAdapter.VH>(DIFF) {
-
-    inner class VH(private val b: ItemStreamBinding) : RecyclerView.ViewHolder(b.root) {
-        fun bind(item: StreamItem) {
-            val ctx = b.root.context
-            val (chipBg, chipFg, dotColor) = when (item.type) {
-                StreamType.HLS       -> Triple(R.drawable.bg_chip_hls,   R.color.chip_hls,   R.color.chip_hls)
-                StreamType.MP4       -> Triple(R.drawable.bg_chip_mp4,   R.color.chip_mp4,   R.color.chip_mp4)
-                StreamType.DASH      -> Triple(R.drawable.bg_chip_dash,  R.color.chip_dash,  R.color.chip_dash)
-                StreamType.FLV       -> Triple(R.drawable.bg_chip_flv,   R.color.chip_flv,   R.color.chip_flv)
-                StreamType.WEBM      -> Triple(R.drawable.bg_chip_webm,  R.color.chip_webm,  R.color.chip_webm)
-                StreamType.WEBSOCKET -> Triple(R.drawable.bg_chip_ws,    R.color.chip_ws,    R.color.chip_ws)
-                StreamType.RTMP      -> Triple(R.drawable.bg_chip_rtmp,  R.color.chip_rtmp,  R.color.chip_rtmp)
-                StreamType.OTHER     -> Triple(R.drawable.bg_chip_other, R.color.chip_other, R.color.chip_other)
-            }
-            b.tvType.text = item.label
-            b.tvType.setBackgroundResource(chipBg)
-            b.tvType.setTextColor(ContextCompat.getColor(ctx, chipFg))
-            b.qualityDot.backgroundTintList = android.content.res.ColorStateList.valueOf(
-                ContextCompat.getColor(ctx, dotColor)
-            )
-
-            val resolution = extractResolution(item.url) ?: "Auto"
-            b.tvQuality.text = resolution
-            b.tvCodec.text = buildString {
-                append(item.type.name)
-                append(" · ")
-                append(guessCodec(item.type))
-                if (item.source.isNotBlank()) {
-                    append(" · via ")
-                    append(item.source)
-                }
-            }
-            b.tvSource.text = ""
-
-            b.tvUrl.text = item.url
-            b.tvUrl.setTextIsSelectable(true)
-            b.root.setOnLongClickListener {
-                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cm.setPrimaryClip(ClipData.newPlainText("stream_url", item.url))
-                Toast.makeText(ctx, "Copied: ${item.url.take(50)}...", Toast.LENGTH_SHORT).show()
-                true
-            }
-
-            b.btnCopy.setOnClickListener  { onCopy(item)  }
-            b.btnPlay.setOnClickListener  { onPlay(item)  }
-            b.btnShare.setOnClickListener { onShare(item) }
-        }
-
-        private fun extractResolution(url: String): String? {
-            return Regex("(?i)(4k|2160p|1440p|1080p|720p|480p|360p|240p|144p)").find(url)?.value?.uppercase()
-        }
-
-        private fun guessCodec(type: StreamType): String = when (type) {
-            StreamType.HLS       -> "H.264 / AAC"
-            StreamType.MP4       -> "H.264 / AAC"
-            StreamType.DASH      -> "H.265 / AAC"
-            StreamType.FLV       -> "H.264 / MP3"
-            StreamType.WEBM      -> "VP8 / Vorbis"
-            StreamType.WEBSOCKET -> "Opus / VP8"
-            StreamType.RTMP      -> "H.264 / AAC"
-            StreamType.OTHER     -> "Unknown"
-        }
+data class NetworkRequest(
+    val id: Long = System.currentTimeMillis(),
+    val url: String,
+    val method: String,
+    val headers: Map<String, String>,
+    val pageUrl: String,
+    val isStream: Boolean,
+    val streamType: StreamType? = null,
+    val timestamp: Long = System.currentTimeMillis(),
+    // ── Response fields (populated after OkHttp fetch) ──
+    val statusCode: Int = 0,
+    val responseHeaders: Map<String, String> = emptyMap(),
+    val responseBodyPreview: String = "",
+    val mimeType: String = "",
+    val contentLength: Long = -1L,
+    // ── Request payload fields ──
+    val requestBody: String = "",
+    val queryParameters: Map<String, String> = emptyMap(),
+    val referer: String = ""
+) {
+    val host: String get() = runCatching { java.net.URL(url).host }.getOrElse { "" }
+    val path: String get() = runCatching { java.net.URL(url).path }.getOrElse { url }
+    val tag: String get() = when {
+        isStream -> streamType?.name ?: "STREAM"
+        url.contains(".js")   -> "JS"
+        url.contains(".css")  -> "CSS"
+        url.contains(".png") || url.contains(".jpg") || url.contains(".webp") -> "IMG"
+        url.contains("api")  -> "API"
+        url.contains(".json") -> "JSON"
+        else -> "REQ"
+    }
+    val tagColor: String get() = when (tag) {
+        "HLS"   -> "#10B981"
+        "MP4"   -> "#3B82F6"
+        "DASH"  -> "#8B5CF6"
+        "FLV"   -> "#F59E0B"
+        "STREAM"-> "#10B981"
+        "API","JSON" -> "#3B82F6"
+        "JS"    -> "#F59E0B"
+        "CSS"   -> "#8B5CF6"
+        "IMG"   -> "#14B8A6"
+        else    -> "#6B7280"
     }
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = VH(
-        ItemStreamBinding.inflate(LayoutInflater.from(parent.context), parent, false)
+    /** Parse query parameters from URL */
+    fun parseQueryParams(): Map<String, String> {
+        if (queryParameters.isNotEmpty()) return queryParameters
+        return runCatching {
+            val q = java.net.URL(url).query ?: return@runCatching emptyMap()
+            q.split("&").mapNotNull { pair ->
+                val parts = pair.split("=", limit = 2)
+                if (parts.size == 2) {
+                    try { java.net.URLDecoder.decode(parts[0], "UTF-8") to java.net.URLDecoder.decode(parts[1], "UTF-8") }
+                    catch (_: Exception) { parts[0] to parts[1] }
+                } else null
+            }.toMap()
+        }.getOrElse { emptyMap() }
+    }
+
+    /** Create a copy with response data filled in */
+    fun withResponse(
+        statusCode: Int,
+        responseHeaders: Map<String, String>,
+        responseBodyPreview: String,
+        mimeType: String,
+        contentLength: Long
+    ): NetworkRequest = copy(
+        statusCode = statusCode,
+        responseHeaders = responseHeaders,
+        responseBodyPreview = responseBodyPreview,
+        mimeType = mimeType,
+        contentLength = contentLength
     )
-    override fun onBindViewHolder(holder: VH, position: Int) = holder.bind(getItem(position))
-
-    companion object {
-        private val DIFF = object : DiffUtil.ItemCallback<StreamItem>() {
-            override fun areItemsTheSame(a: StreamItem, b: StreamItem) = a.url == b.url
-            override fun areContentsTheSame(a: StreamItem, b: StreamItem) = a == b
-        }
-    }
 }
