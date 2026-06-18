@@ -1620,10 +1620,10 @@ class DevToolsSheet(
         } else {
             msgs.take(50).forEach { msg ->
                 val (badgeText, badgeColor, badgeFg) = when (msg.direction) {
-                    "open"  -> Triple("OPEN",  "#10B981", Color.WHITE)
-                    "send"  -> Triple("SENT",  "#2196F3", Color.WHITE)
-                    "recv"  -> Triple("RECV",  "#FF9800", Color.WHITE)
-                    else    -> Triple("EVENT", "#6B7280", Color.WHITE)
+                    "open"  -> Triple("OPEN",  Color.parseColor("#10B981"), Color.WHITE)
+                    "send"  -> Triple("SENT",  Color.parseColor("#2196F3"), Color.WHITE)
+                    "recv"  -> Triple("RECV",  Color.parseColor("#FF9800"), Color.WHITE)
+                    else    -> Triple("EVENT", Color.parseColor("#6B7280"), Color.WHITE)
                 }
                 val card = col(ctx, "#1E1E1E").apply {
                     setPadding(10.dp, 8.dp, 10.dp, 8.dp)
@@ -1775,7 +1775,7 @@ class DevToolsSheet(
             addView(inner)
         }
         val url = webView.url ?: ""
-        val site = url.let { runCatching { java.net.URL(it).let { u -> "${u.protocol}://${u.host}" } }.getOrElse { it } }
+        val site = runCatching { java.net.URL(url).let { u -> "${u.protocol}://${u.host}" } }.getOrElse { url }
 
         inner.addView(sectionHeader(ctx, "☁ CloudStream3 Plugin Generator"))
         inner.addView(tv(ctx, "Site: $site", "#888", 10f).apply { setPadding(0, 0, 0, 8.dp) })
@@ -2127,42 +2127,43 @@ class DevToolsSheet(
     private var consoleHistoryIndex = -1
 
     companion object { const val TAG = "DevToolsSheet" }
-}
 
-// ── NetworkAdapter ────────────────────────────────────────────────────────────
-class NetworkAdapter(
-    private val allItems: List<NetworkRequest>,
-    private val onClick: (NetworkRequest) -> Unit
-) : RecyclerView.Adapter<NetworkAdapter.VH>() {
+    // ── NetworkAdapter (nested static class) ───────────────────────────────────
+    class NetworkAdapter(
+        private val allItems: List<NetworkRequest>,
+        private val onClick: (NetworkRequest) -> Unit
+    ) : RecyclerView.Adapter<NetworkAdapter.VH>() {
 
-    private var displayed = allItems.toMutableList()
+        private var displayed = allItems.toMutableList()
 
-    fun filter(q: String) {
-        displayed = if(q.isBlank()) allItems.toMutableList()
-        else allItems.filter{it.url.contains(q,true)}.toMutableList()
-        notifyDataSetChanged()
+        fun filter(q: String) {
+            displayed = if(q.isBlank()) allItems.toMutableList()
+            else allItems.filter{it.url.contains(q,true)}.toMutableList()
+            notifyDataSetChanged()
+        }
+
+        inner class VH(root: View, val tvTag:TextView, val tvHost:TextView, val tvPath:TextView): RecyclerView.ViewHolder(root)
+
+        override fun onCreateViewHolder(parent: ViewGroup, t: Int): VH {
+            val ctx = parent.context; val d=ctx.resources.displayMetrics.density; fun Int.dp()=(this*d).toInt()
+            val tvTag  = TextView(ctx).apply{textSize=9f;typeface=android.graphics.Typeface.DEFAULT_BOLD;setPadding(6.dp(),2.dp(),6.dp(),2.dp());minWidth=52.dp();gravity=Gravity.CENTER;layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{marginEnd=8.dp()}}
+            val tvHost = TextView(ctx).apply{setTextColor(Color.parseColor("#FFFFFF"));textSize=11f;typeface=android.graphics.Typeface.DEFAULT_BOLD;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END}
+            val tvPath = TextView(ctx).apply{setTextColor(Color.parseColor("#9CA3AF"));textSize=10f;typeface=android.graphics.Typeface.MONOSPACE;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.MIDDLE}
+            val info   = LinearLayout(ctx).apply{orientation=LinearLayout.VERTICAL;layoutParams=LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1f);addView(tvHost);addView(tvPath)}
+            val row    = LinearLayout(ctx).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setPadding(12.dp(),10.dp(),12.dp(),10.dp());setBackgroundColor(Color.parseColor("#1E1E1E"));addView(tvTag);addView(info)}
+            val root   = LinearLayout(ctx).apply{orientation=LinearLayout.VERTICAL;layoutParams=ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);addView(row);addView(View(ctx).apply{setBackgroundColor(Color.parseColor("#252525"));layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,1)})}
+            return VH(root,tvTag,tvHost,tvPath)
+        }
+        override fun getItemCount() = displayed.size
+        override fun onBindViewHolder(h: VH, pos: Int) {
+            val req=displayed[pos]
+            h.tvTag.text=req.tag; h.tvTag.setBackgroundColor(Color.parseColor(req.tagColor)); h.tvTag.setTextColor(Color.WHITE)
+            h.tvHost.text=req.host; h.tvPath.text=req.path
+            h.itemView.setOnClickListener{onClick(req)}
+        }
     }
 
-    inner class VH(root: View, val tvTag:TextView, val tvHost:TextView, val tvPath:TextView): RecyclerView.ViewHolder(root)
-
-    override fun onCreateViewHolder(parent: ViewGroup, t: Int): VH {
-        val ctx = parent.context; val d=ctx.resources.displayMetrics.density; fun Int.dp()=(this*d).toInt()
-        val tvTag  = TextView(ctx).apply{textSize=9f;typeface=android.graphics.Typeface.DEFAULT_BOLD;setPadding(6.dp(),2.dp(),6.dp(),2.dp());minWidth=52.dp();gravity=Gravity.CENTER;layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{marginEnd=8.dp()}}
-        val tvHost = TextView(ctx).apply{setTextColor(Color.parseColor("#FFFFFF"));textSize=11f;typeface=android.graphics.Typeface.DEFAULT_BOLD;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END}
-        val tvPath = TextView(ctx).apply{setTextColor(Color.parseColor("#9CA3AF"));textSize=10f;typeface=android.graphics.Typeface.MONOSPACE;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.MIDDLE}
-        val info   = LinearLayout(ctx).apply{orientation=LinearLayout.VERTICAL;layoutParams=LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1f);addView(tvHost);addView(tvPath)}
-        val row    = LinearLayout(ctx).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setPadding(12.dp(),10.dp(),12.dp(),10.dp());setBackgroundColor(Color.parseColor("#1E1E1E"));addView(tvTag);addView(info)}
-        val root   = LinearLayout(ctx).apply{orientation=LinearLayout.VERTICAL;layoutParams=ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);addView(row);addView(View(ctx).apply{setBackgroundColor(Color.parseColor("#252525"));layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,1)})}
-        return VH(root,tvTag,tvHost,tvPath)
-    }
-    override fun getItemCount() = displayed.size
-    override fun onBindViewHolder(h: VH, pos: Int) {
-        val req=displayed[pos]
-        h.tvTag.text=req.tag; h.tvTag.setBackgroundColor(Color.parseColor(req.tagColor)); h.tvTag.setTextColor(Color.WHITE)
-        h.tvHost.text=req.host; h.tvPath.text=req.path
-        h.itemView.setOnClickListener{onClick(req)}
-    }
-// ─────────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
     // B1: Network Waterfall / Timeline Tab
     // ─────────────────────────────────────────────────────────────────────────
     private fun showTimelineTab() {

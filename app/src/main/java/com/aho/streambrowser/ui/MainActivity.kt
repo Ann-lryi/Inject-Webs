@@ -32,6 +32,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
+import com.aho.streambrowser.R
 import com.aho.streambrowser.databinding.ActivityMainBinding
 import com.aho.streambrowser.detector.BrowserChromeClient
 import com.aho.streambrowser.detector.BrowserWebViewClient
