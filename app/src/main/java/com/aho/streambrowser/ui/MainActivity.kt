@@ -158,7 +158,7 @@ class MainActivity : AppCompatActivity() {
                 renderTabStrip()
             }}
         )
-        b.swipeRefresh.setColorSchemeColors(0xFF1D9E75.toInt())
+        b.swipeRefresh.setColorSchemeColors(0xFF10B981.toInt())
         b.swipeRefresh.setOnRefreshListener {
             b.webView.reload()
             b.swipeRefresh.postDelayed({ b.swipeRefresh.isRefreshing = false }, 500)
@@ -238,26 +238,26 @@ class MainActivity : AppCompatActivity() {
                 setPadding((8*dp).toInt(), 0, (4*dp).toInt(), 0)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = (2*dp).toInt() }
-                setBackgroundColor(if (isCurrent) Color.parseColor("#1D9E75") else Color.parseColor("#1E1E1E"))
+                setBackgroundColor(if (isCurrent) Color.parseColor("#10B981") else Color.parseColor("#1E1E1E"))
                 setOnClickListener { switchTab(idx) }
             }
             val label = TextView(this).apply {
                 text     = tab.title.take(14).ifBlank { tab.url.take(16).removePrefix("https://").removePrefix("http://") }
                 textSize = 10f
-                setTextColor(if (isCurrent) Color.WHITE else Color.parseColor("#AAAAAA"))
+                setTextColor(if (isCurrent) Color.WHITE else Color.parseColor("#B0B0B0"))
                 maxLines = 1
             }
             val close = android.widget.ImageButton(this).apply {
                 setImageResource(R.drawable.ic_close); background = null
                 layoutParams = LinearLayout.LayoutParams((20*dp).toInt(), (20*dp).toInt())
-                setColorFilter(if (isCurrent) Color.WHITE else Color.parseColor("#888888"))
+                setColorFilter(if (isCurrent) Color.WHITE else Color.parseColor("#9CA3AF"))
                 setOnClickListener { closeTab(idx) }
             }
             chip.addView(label); chip.addView(close); strip.addView(chip)
         }
         val addBtn = TextView(this).apply {
             text = " + "; textSize = 14f
-            setTextColor(Color.parseColor("#1D9E75")); gravity = android.view.Gravity.CENTER
+            setTextColor(Color.parseColor("#10B981")); gravity = android.view.Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams((32*dp).toInt(), LinearLayout.LayoutParams.MATCH_PARENT)
             setOnClickListener { openNewTab() }
             setOnLongClickListener { showTabManager(); true }
@@ -341,9 +341,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateFab() {
         val s = detector.streamCount(); val r = detector.requestCount()
-        when { s>0 -> { b.btnDevTools.text="● $s Stream"; b.btnDevTools.extend() }
+        when { s>0 -> { b.btnDevTools.text="$s Streams"; b.btnDevTools.extend() }
                r>0 -> { b.btnDevTools.text="DevTools ($r)"; b.btnDevTools.shrink() }
                else -> { b.btnDevTools.text="DevTools"; b.btnDevTools.shrink() } }
+        b.btnDevTools.iconTint = android.content.res.ColorStateList.valueOf(
+            if (s > 0) Color.parseColor("#34D399") else Color.WHITE
+        )
     }
 
     // ── Extras ────────────────────────────────────────────────────────────────
@@ -363,10 +366,10 @@ class MainActivity : AppCompatActivity() {
             CookieManager.getInstance().removeAllCookies(null)
             b.webView.clearCache(true); b.webView.clearHistory()
             b.webView.settings.cacheMode = WebSettings.LOAD_NO_CACHE
-            b.toolbar.setBackgroundColor(Color.parseColor("#1A1A2A"))
+            b.toolbar.setBackgroundColor(Color.parseColor("#1F2937"))
         } else {
             b.webView.settings.cacheMode = WebSettings.LOAD_DEFAULT
-            b.toolbar.setBackgroundColor(Color.parseColor("#141414"))
+            b.toolbar.background = androidx.core.content.ContextCompat.getDrawable(this, R.drawable.bg_toolbar)
         }
         Toast.makeText(this, if (isIncognito) "🕵 Incognito ON" else "🔓 OFF", Toast.LENGTH_SHORT).show()
     }
@@ -410,19 +413,9 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, if (host.isBlank()) "Proxy cleared" else "Proxy: $host:$port", Toast.LENGTH_SHORT).show()
     }
 
-    private var devToolsOverlay: DevToolsOverlay? = null
-
     private fun openDevTools() {
-        if (devToolsOverlay == null) {
-            devToolsOverlay = DevToolsOverlay(this, detector, b.webView, this) { playStream(it) }
-            val root = window.decorView as android.widget.FrameLayout
-            root.addView(devToolsOverlay, android.widget.FrameLayout.LayoutParams(
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-            ))
-            devToolsOverlay?.visibility = android.view.View.GONE
-        }
-        devToolsOverlay?.show()
+        DevToolsSheet(detector, b.webView, this) { playStream(it) }
+            .show(supportFragmentManager, DevToolsSheet.TAG)
     }
 
     private fun playStream(item: StreamItem) {

@@ -139,14 +139,14 @@ object ElementPickerManager {
         // Header info
         val tvSelector = TextView(ctx).apply {
             text = "Element: $selector"
-            setTextColor(Color.parseColor("#1D9E75"))
+            setTextColor(Color.parseColor("#10B981"))
             textSize = 11f
             typeface = android.graphics.Typeface.MONOSPACE
             setPadding(16.dp(ctx), 12.dp(ctx), 16.dp(ctx), 4.dp(ctx))
         }
         val tvSize = TextView(ctx).apply {
             text = "${html.length} ký tự · ${String.format("%.1f", html.length / 1024f)} KB"
-            setTextColor(Color.parseColor("#888888"))
+            setTextColor(Color.parseColor("#9CA3AF"))
             textSize = 10f
             typeface = android.graphics.Typeface.MONOSPACE
             setPadding(16.dp(ctx), 0, 16.dp(ctx), 8.dp(ctx))
@@ -156,13 +156,13 @@ object ElementPickerManager {
 
         // Divider
         layout.addView(View(ctx).apply {
-            setBackgroundColor(Color.parseColor("#2E2E2E"))
+            setBackgroundColor(Color.parseColor("#333333"))
             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
         })
 
         // HTML content
         val scroll = ScrollView(ctx).apply {
-            setBackgroundColor(Color.parseColor("#0D0D0D"))
+            setBackgroundColor(Color.parseColor("#121212"))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 400.dp(ctx)
             )

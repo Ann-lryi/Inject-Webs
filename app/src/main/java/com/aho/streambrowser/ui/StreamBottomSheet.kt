@@ -28,7 +28,7 @@ class StreamBottomSheet(
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        b.tvCount.text = "${streams.size} luồng video tìm thấy"
+        b.tvCount.text = "${streams.size} Streams Detected"
 
         val adapter = StreamAdapter(
             onCopy  = ::copyUrl,

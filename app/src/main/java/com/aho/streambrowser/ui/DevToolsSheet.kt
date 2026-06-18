@@ -80,31 +80,94 @@ class DevToolsSheet(
     // ── Root ──────────────────────────────────────────────────────────────────
     private fun buildRoot(): View {
         val ctx = requireContext()
-        val outer = col(ctx, "#1A1A1A")
+        val outer = col(ctx, "#1E1E1E")
 
-        // Handle
+        // Drag handle
         outer.addView(LinearLayout(ctx).apply {
             gravity = Gravity.CENTER_HORIZONTAL
             addView(View(ctx).apply {
-                setBackgroundColor(Color.parseColor("#444444"))
-                layoutParams = LinearLayout.LayoutParams(120.dp, 4.dp).apply { topMargin=10.dp; bottomMargin=10.dp }
+                setBackgroundColor(Color.parseColor("#555555"))
+                layoutParams = LinearLayout.LayoutParams(40.dp, 4.dp).apply { topMargin = 8.dp; bottomMargin = 8.dp }
             })
         })
 
-        // Tab row
-        val tabRow = row(ctx, "#1A1A1A").apply {
+        // ── DevTools Pro • LIVE header ───────────────────────────────────
+        val header = row(ctx, "#1E1E1E").apply {
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
+            setPadding(16.dp, 6.dp, 12.dp, 6.dp)
+        }
+        val ivBolt = android.widget.ImageView(ctx).apply {
+            setImageResource(com.aho.streambrowser.R.drawable.ic_lightning)
+            setColorFilter(Color.parseColor("#10B981"))
+            layoutParams = LinearLayout.LayoutParams(20.dp, 20.dp).apply { marginEnd = 8.dp }
+        }
+        val tvTitle = TextView(ctx).apply {
+            text = "DevTools Pro"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            layoutParams = LinearLayout.LayoutParams(WRAP, WRAP)
+        }
+        val tvV5 = TextView(ctx).apply {
+            text = "v5"
+            setTextColor(Color.parseColor("#10B981"))
+            textSize = 10f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setPadding(4.dp, 0, 4.dp, 0)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                setColor(Color.parseColor("#1A2A1A"))
+                cornerRadius = 4f
+            }
+            layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = 6.dp; topMargin = 2.dp }
+        }
+        val spacer = View(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
+        }
+        val liveDot = View(ctx).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(Color.parseColor("#10B981"))
+            }
+            layoutParams = LinearLayout.LayoutParams(8.dp, 8.dp).apply { marginEnd = 4.dp }
+        }
+        val tvLive = TextView(ctx).apply {
+            text = "LIVE"
+            setTextColor(Color.parseColor("#10B981"))
+            textSize = 11f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            layoutParams = LinearLayout.LayoutParams(WRAP, WRAP)
+        }
+        header.addView(ivBolt)
+        header.addView(tvTitle)
+        header.addView(tvV5)
+        header.addView(spacer)
+        header.addView(liveDot)
+        header.addView(tvLive)
+        outer.addView(header)
+
+        outer.addView(View(ctx).apply {
+            setBackgroundColor(Color.parseColor("#333333"))
+            layoutParams = LinearLayout.LayoutParams(MATCH, 1)
+        })
+
+        // ── Tab row ───────────────────────────────────────────────────────
+        val tabRow = row(ctx, "#1E1E1E").apply {
             layoutParams = LinearLayout.LayoutParams(MATCH, 44.dp)
+            setPadding(0, 0, 4.dp, 0)
         }
         tabLayout = TabLayout(ctx).apply {
-            setBackgroundColor(Color.parseColor("#1A1A1A"))
-            setTabTextColors(Color.parseColor("#888888"), Color.parseColor("#1D9E75"))
-            setSelectedTabIndicatorColor(Color.parseColor("#1D9E75"))
+            setBackgroundColor(Color.parseColor("#1E1E1E"))
+            setTabTextColors(Color.parseColor("#9CA3AF"), Color.parseColor("#10B981"))
+            setSelectedTabIndicatorColor(Color.parseColor("#10B981"))
+            setSelectedTabIndicatorHeight(3.dp)
             tabMode = TabLayout.MODE_SCROLLABLE
+            tabGravity = TabLayout.GRAVITY_START
             layoutParams = LinearLayout.LayoutParams(0, MATCH, 1f)
         }
         refreshTabs()
 
-        val btnClearAll = btn(ctx, "🗑", "#E24B4A").apply {
+        val btnClearAll = btn(ctx, "Clear", "#2A1A1A", "#EF4444").apply {
             setOnClickListener {
                 detector.clear()
                 refreshTabs()
@@ -119,6 +182,7 @@ class DevToolsSheet(
 
         contentFrame = FrameLayout(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
+            setBackgroundColor(Color.parseColor("#121212"))
         }
         outer.addView(contentFrame)
         showTab(0)
@@ -132,53 +196,214 @@ class DevToolsSheet(
     }
 
     private fun refreshTabs() {
-        val titles = listOf(
-            "🌐 Net(${detector.requestCount()})",
-            "▶ Stream(${detector.streamCount()})",
-            "⚡ Console",
-            "🔬 Deep",
-            "📄 HTML",
-            "📋 M3U8",
-            "🚫 Blocker",
-            "🔀 UA",
-            "★ Saved",
-            "🔐 Crypto(${detector.cryptoCount()})"
-        )
-        if (tabLayout.tabCount == 0) titles.forEach { tabLayout.addTab(tabLayout.newTab().setText(it)) }
-        else titles.forEachIndexed { i, t -> tabLayout.getTabAt(i)?.text = t }
+        val titles = tabOrder.map { it.title() }
+        if (tabLayout.tabCount == 0) {
+            titles.forEach { tabLayout.addTab(tabLayout.newTab().setText(it)) }
+        } else {
+            titles.forEachIndexed { i, t -> tabLayout.getTabAt(i)?.text = t }
+        }
     }
 
-    private fun showTab(pos: Int) = when(pos) {
-        0 -> showNetworkTab()
-        1 -> showStreamsTab()
-        2 -> showConsoleTab()
-        3 -> showDeepTab()
-        4 -> showHtmlTab()
-        5 -> showM3u8Tab()
-        6 -> showBlockerTab()
-        7 -> showUaTab()
-        8 -> showSavedTab()
-        9  -> showCryptoTab()
-        10 -> showWsTab()
-        11 -> showCookieTab()
-        12 -> showPluginTab()
-        13 -> showStorageTab()
-        14 -> showCssTab()
-        15 -> showTimelineTab()
-        16 -> showSwIdbTab()
-        17 -> showDomTab()
-        18 -> showProxyTab()
-        19 -> showHistoryTab()
-        else -> {}
+    private fun showTab(pos: Int) {
+        val id = tabOrder.getOrNull(pos) ?: return
+        when (id) {
+            TabId.Network  -> showNetworkTab()
+            TabId.Streams  -> showStreamsTab()
+            TabId.Console  -> showConsoleTab()
+            TabId.Headers  -> showHeadersTab()
+            TabId.Crypto   -> showCryptoTab()
+            TabId.WS       -> showWsTab()
+            TabId.Deep     -> showDeepTab()
+            TabId.HTML     -> showHtmlTab()
+            TabId.M3U8     -> showM3u8Tab()
+            TabId.Blocker  -> showBlockerTab()
+            TabId.UA       -> showUaTab()
+            TabId.Saved    -> showSavedTab()
+            TabId.Cookie   -> showCookieTab()
+            TabId.Plugin   -> showPluginTab()
+            TabId.Storage  -> showStorageTab()
+            TabId.CSS      -> showCssTab()
+            TabId.Timeline -> showTimelineTab()
+            TabId.SW       -> showSwIdbTab()
+            TabId.DOM      -> showDomTab()
+            TabId.Proxy    -> showProxyTab()
+            TabId.History  -> showHistoryTab()
+        }
+    }
+
+    // Tab ids (stable across reorders). Primary design tabs come first.
+    private enum class TabId(val title: () -> String) {
+        Network ({ "Network" }),
+        Streams ({ "Streams" }),
+        Console ({ "Console" }),
+        Headers ({ "Headers" }),
+        Crypto  ({ "Crypto" }),
+        WS      ({ "WS" }),
+        Deep    ({ "Deep" }),
+        HTML    ({ "HTML" }),
+        M3U8    ({ "M3U8" }),
+        Blocker ({ "Blocker" }),
+        UA      ({ "UA" }),
+        Saved   ({ "Saved" }),
+        Cookie  ({ "Cookie" }),
+        Plugin  ({ "Plugin" }),
+        Storage ({ "Storage" }),
+        CSS     ({ "CSS" }),
+        Timeline({ "Timeline" }),
+        SW      ({ "SW/IDB" }),
+        DOM     ({ "DOM" }),
+        Proxy   ({ "Proxy" }),
+        History ({ "History" }),
+    }
+    private val tabOrder: List<TabId> = TabId.values().toList()
+
+    // ── 0. Headers (HTTP + JWT decoder) ────────────────────────────────────────
+    private fun showHeadersTab() {
+        val ctx = requireContext()
+        val container = col(ctx, "#121212")
+        val sv = android.widget.ScrollView(ctx).apply {
+            layoutParams = FrameLayout.LayoutParams(MATCH, MATCH)
+        }
+        val inner = col(ctx).apply { setPadding(12.dp, 10.dp, 12.dp, 16.dp) }
+        sv.addView(inner)
+        container.addView(sv)
+
+        val req = detector.requests.lastOrNull { it.url.startsWith("http") && it.method.equals("GET", true) }
+        val respHeaders = req?.responseHeaders ?: emptyMap()
+        val reqHeaders  = req?.headers          ?: emptyMap()
+
+        inner.addView(sectionHeader(ctx, "REQUEST HEADERS"))
+        if (reqHeaders.isEmpty()) {
+            inner.addView(tv(ctx, "No request headers captured yet.", "#757575", 11f).apply {
+                setPadding(0, 4.dp, 0, 12.dp)
+            })
+        } else {
+            reqHeaders.forEach { (k, v) -> inner.addView(headerRow(ctx, k, v, isResponse = false)) }
+            inner.addView(sectionDivider(ctx))
+        }
+
+        inner.addView(sectionHeader(ctx, "RESPONSE HEADERS"))
+        if (respHeaders.isEmpty()) {
+            inner.addView(tv(ctx, "No response headers captured yet.", "#757575", 11f).apply {
+                setPadding(0, 4.dp, 0, 12.dp)
+            })
+        } else {
+            respHeaders.forEach { (k, v) -> inner.addView(headerRow(ctx, k, v, isResponse = true)) }
+            inner.addView(sectionDivider(ctx))
+        }
+
+        inner.addView(sectionHeader(ctx, "JWT Decoder"))
+        val jwtCard = col(ctx, "#2A2A2A").apply {
+            setPadding(12.dp, 10.dp, 12.dp, 12.dp)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                setColor(Color.parseColor("#2A2A2A"))
+                cornerRadius = 8.dp.toFloat()
+                setStroke(1.dp, Color.parseColor("#333333"))
+            }
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = 6.dp }
+        }
+        val jwtInput = EditText(ctx).apply {
+            hint = "Paste JWT token..."
+            setHintTextColor(Color.parseColor("#555555"))
+            setTextColor(Color.parseColor("#FFFFFF"))
+            textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                setColor(Color.parseColor("#1E1E1E"))
+                cornerRadius = 6.dp.toFloat()
+                setStroke(1.dp, Color.parseColor("#333333"))
+            }
+            setPadding(8.dp, 6.dp, 8.dp, 6.dp)
+            minLines = 2
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
+        }
+        val jwtOut = TextView(ctx).apply {
+            text = "Decoded payload will appear here."
+            setTextColor(Color.parseColor("#B0B0B0"))
+            textSize = 10f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setPadding(0, 8.dp, 0, 4.dp)
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
+        }
+        val btnDecode = btn(ctx, "Decode", "#1A2A1A", "#10B981").apply {
+            setOnClickListener {
+                val token = jwtInput.text.toString().trim()
+                if (token.isBlank()) {
+                    jwtOut.text = "Please paste a JWT first."
+                    jwtOut.setTextColor(Color.parseColor("#FF9800"))
+                    return@setOnClickListener
+                }
+                runCatching {
+                    val info = JwtDecoder.decode(token)
+                    if (info == null) {
+                        jwtOut.text = "Invalid JWT (could not decode)."
+                        jwtOut.setTextColor(Color.parseColor("#EF4444"))
+                    } else {
+                        val sb = StringBuilder()
+                        sb.append("subject:  ").append(info.subject.ifBlank { "(none)" }).append("\n")
+                        sb.append("issuer:   ").append(info.issuer.ifBlank { "(none)" }).append("\n")
+                        sb.append("expired:  ").append(if (info.isExpired) "yes" else "no").append("\n")
+                        sb.append("exp time: ").append(info.expTime).append("\n\n")
+                        sb.append("--- header ---\n").append(info.header).append("\n\n")
+                        sb.append("--- payload ---\n").append(info.payload)
+                        jwtOut.text = sb.toString()
+                        jwtOut.setTextColor(Color.parseColor("#10B981"))
+                    }
+                }.onFailure {
+                    jwtOut.text = "Error: ${it.message}"
+                    jwtOut.setTextColor(Color.parseColor("#EF4444"))
+                }
+            }
+        }
+        jwtCard.addView(jwtInput)
+        jwtCard.addView(jwtOut)
+        jwtCard.addView(btnDecode)
+        inner.addView(jwtCard)
+
+        contentFrame.addView(container)
+    }
+
+    private fun headerRow(ctx: Context, key: String, value: String, isResponse: Boolean): LinearLayout {
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 5.dp, 0, 5.dp)
+            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
+        }
+        val kColor = if (isResponse) "#10B981" else "#00CED1"
+        val tvKey = TextView(ctx).apply {
+            text = key
+            setTextColor(Color.parseColor(kColor))
+            textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            layoutParams = LinearLayout.LayoutParams(0, WRAP, 0.35f)
+        }
+        val tvVal = TextView(ctx).apply {
+            text = value
+            setTextColor(Color.parseColor("#E0E0E0"))
+            textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setTextIsSelectable(true)
+            layoutParams = LinearLayout.LayoutParams(0, WRAP, 0.65f).apply { marginStart = 8.dp }
+        }
+        row.addView(tvKey); row.addView(tvVal)
+        return row
     }
 
     // ── 1. Network ────────────────────────────────────────────────────────────
     private fun showNetworkTab() {
         val ctx = requireContext()
         val container = col(ctx)
-        val filterRow = row(ctx, "#141414").apply { setPadding(12.dp,6.dp,8.dp,6.dp) }
+        val filterRow = row(ctx, "#1E1E1E").apply { setPadding(12.dp,6.dp,8.dp,6.dp) }
         val searchBox = editText(ctx, "Lọc URL...")
-        val btnX = btn(ctx, "✕", "#888888")
+        val btnX = btn(ctx, "✕", "#9CA3AF")
         filterRow.addView(searchBox)
         filterRow.addView(btnX)
         container.addView(filterRow)
@@ -266,13 +491,13 @@ class DevToolsSheet(
         val container = col(ctx)
 
         // ── Mode buttons ──────────────────────────────────────────────────────
-        val modeRow = row(ctx, "#141414").apply { setPadding(10.dp, 8.dp, 10.dp, 8.dp) }
+        val modeRow = row(ctx, "#1E1E1E").apply { setPadding(10.dp, 8.dp, 10.dp, 8.dp) }
 
         val btnFull = Button(ctx).apply {
             text = "📄 Full HTML"
             textSize = 11f
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#1D9E75"))
+            setBackgroundColor(Color.parseColor("#10B981"))
             setPadding(14.dp, 6.dp, 14.dp, 6.dp)
         }
         val btnPicker = Button(ctx).apply {
@@ -293,16 +518,16 @@ class DevToolsSheet(
         container.addView(divider(ctx))
 
         // ── Search ────────────────────────────────────────────────────────────
-        val searchRow = row(ctx, "#0D0D0D").apply { setPadding(8.dp, 4.dp, 8.dp, 4.dp) }
+        val searchRow = row(ctx, "#121212").apply { setPadding(8.dp, 4.dp, 8.dp, 4.dp) }
         val searchBox = EditText(ctx).apply {
             hint = "🔍  Tìm trong HTML..."
             setHintTextColor(Color.parseColor("#444444"))
-            setTextColor(Color.parseColor("#EFEFEF"))
+            setTextColor(Color.parseColor("#FFFFFF"))
             textSize = 11f; typeface = android.graphics.Typeface.MONOSPACE; background = null
             layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
         }
         val tvMatch = TextView(ctx).apply {
-            text = ""; setTextColor(Color.parseColor("#1D9E75"))
+            text = ""; setTextColor(Color.parseColor("#10B981"))
             textSize = 10f; typeface = android.graphics.Typeface.MONOSPACE
             setPadding(8.dp, 0, 0, 0)
         }
@@ -313,7 +538,7 @@ class DevToolsSheet(
         // ── Output ────────────────────────────────────────────────────────────
         val scroll = ScrollView(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
-            setBackgroundColor(Color.parseColor("#080808"))
+            setBackgroundColor(Color.parseColor("#121212"))
         }
         val outputTv = TextView(ctx).apply {
             text = "📄 Full HTML – lấy toàn bộ HTML trang\n\n✏ Element Picker – đóng panel, tap vào element trên trang → dialog hiện HTML của đúng element đó"
@@ -326,7 +551,7 @@ class DevToolsSheet(
         container.addView(divider(ctx))
 
         // ── Action row ────────────────────────────────────────────────────────
-        val actionRow = row(ctx, "#141414").apply { setPadding(8.dp, 6.dp, 8.dp, 6.dp) }
+        val actionRow = row(ctx, "#1E1E1E").apply { setPadding(8.dp, 6.dp, 8.dp, 6.dp) }
         val btnSnap = btn(ctx, "📸 Snap", "#1A1A2A", "#90CAF9").apply {
             setOnClickListener {
                 snapshotUrls = detector.requests.map { it.url }.toSet()
@@ -338,11 +563,11 @@ class DevToolsSheet(
         }
         // J1: SSL bypass toggle
         var sslOn = false
-        val btnSsl = btn(ctx, "🔒 SSL", "#2A1A1A", "#888888").apply {
+        val btnSsl = btn(ctx, "🔒 SSL", "#2A1A1A", "#9CA3AF").apply {
             setOnClickListener {
                 sslOn = !sslOn
                 (activity as? com.aho.streambrowser.ui.MainActivity)?.setSslBypass(sslOn)
-                setTextColor(android.graphics.Color.parseColor(if (sslOn) "#E57373" else "#888888"))
+                setTextColor(android.graphics.Color.parseColor(if (sslOn) "#E57373" else "#9CA3AF"))
                 text = if (sslOn) "⚠ SSL" else "🔒 SSL"
             }
         }
@@ -391,7 +616,7 @@ class DevToolsSheet(
 
         btnFull.setOnClickListener {
             tvSize.text = "Đang tải..."
-            outputTv.setTextColor(Color.parseColor("#888888"))
+            outputTv.setTextColor(Color.parseColor("#9CA3AF"))
             outputTv.text = "Đang lấy HTML..."
             webView.evaluateJavascript("document.documentElement.outerHTML") { result ->
                 requireActivity().runOnUiThread {
@@ -455,15 +680,15 @@ class DevToolsSheet(
     private fun showM3u8Tab() {
         val ctx = requireContext()
         val container = col(ctx)
-        container.addView(tv(ctx, "Paste URL m3u8 để xem danh sách chất lượng:", "#888888", 11f).apply {
+        container.addView(tv(ctx, "Paste URL m3u8 để xem danh sách chất lượng:", "#9CA3AF", 11f).apply {
             setPadding(12.dp,10.dp,12.dp,4.dp)
         })
 
-        val inputRow = row(ctx, "#141414").apply { setPadding(8.dp,6.dp,8.dp,6.dp) }
+        val inputRow = row(ctx, "#1E1E1E").apply { setPadding(8.dp,6.dp,8.dp,6.dp) }
         val urlBox = editText(ctx, "https://example.com/master.m3u8").apply {
             detector.streams.firstOrNull { it.url.contains("m3u8") }?.let { setText(it.url) }
         }
-        val btnParse = btn(ctx, "Parse", "#1D9E75", "#FFFFFF")
+        val btnParse = btn(ctx, "Parse", "#10B981", "#FFFFFF")
         inputRow.addView(urlBox)
         inputRow.addView(btnParse)
         container.addView(inputRow)
@@ -478,7 +703,7 @@ class DevToolsSheet(
             val url = urlBox.text.toString().trim()
             if (url.isEmpty()) return@setOnClickListener
             resultContainer.removeAllViews()
-            resultContainer.addView(tv(ctx, "⏳ Đang parse...", "#888888", 11f).apply { setPadding(12.dp,12.dp,12.dp,0) })
+            resultContainer.addView(tv(ctx, "⏳ Đang parse...", "#9CA3AF", 11f).apply { setPadding(12.dp,12.dp,12.dp,0) })
 
             scope.launch {
                 val referer = detector.streams.firstOrNull { it.url == url }?.referer ?: ""
@@ -491,7 +716,7 @@ class DevToolsSheet(
                     resultContainer.addView(tv(ctx, "Không parse được – có thể là media playlist hoặc cần auth.", "#E24B4A", 11f).apply { setPadding(12.dp,12.dp,12.dp,0) })
                     return@launch
                 }
-                resultContainer.addView(tv(ctx, "${qualities.size} quality streams:", "#1D9E75", 12f).apply { setPadding(12.dp,10.dp,12.dp,4.dp) })
+                resultContainer.addView(tv(ctx, "${qualities.size} quality streams:", "#10B981", 12f).apply { setPadding(12.dp,10.dp,12.dp,4.dp) })
                 qualities.forEach { q ->
                     val card = col(ctx, "#242424").apply {
                         setPadding(12.dp,10.dp,12.dp,10.dp)
@@ -499,8 +724,8 @@ class DevToolsSheet(
                         lp.setMargins(8.dp,4.dp,8.dp,0)
                         layoutParams = lp
                     }
-                    card.addView(tv(ctx, "📺 ${q.label}", "#EFEFEF", 13f).apply { typeface = android.graphics.Typeface.DEFAULT_BOLD })
-                    card.addView(tv(ctx, q.url, "#888888", 10f).apply {
+                    card.addView(tv(ctx, "📺 ${q.label}", "#FFFFFF", 13f).apply { typeface = android.graphics.Typeface.DEFAULT_BOLD })
+                    card.addView(tv(ctx, q.url, "#9CA3AF", 10f).apply {
                         typeface = android.graphics.Typeface.MONOSPACE
                         maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
                     })
@@ -508,7 +733,7 @@ class DevToolsSheet(
                     btnRow.addView(btn(ctx, "Copy", "#0D47A1", "#FFFFFF").apply {
                         setOnClickListener { copy(q.url) }
                     })
-                    btnRow.addView(btn(ctx, "Phát", "#1D9E75", "#FFFFFF").apply {
+                    btnRow.addView(btn(ctx, "Phát", "#10B981", "#FFFFFF").apply {
                         layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = 8.dp }
                         setOnClickListener {
                             val stream = StreamItem.fromUrl(q.url, referer, "m3u8_parser")
@@ -534,13 +759,13 @@ class DevToolsSheet(
                 setPadding(12.dp, 8.dp, 12.dp, 8.dp)
 
                 // Stats
-                addView(tv(ctx, "🚫 Đã block: ${blocker.blockedCount} requests", "#1D9E75", 13f).apply {
+                addView(tv(ctx, "🚫 Đã block: ${blocker.blockedCount} requests", "#10B981", 13f).apply {
                     setPadding(0, 0, 0, 8.dp)
                 })
 
                 // Builtin toggle
                 val builtinRow = row(ctx)
-                builtinRow.addView(tv(ctx, "Block ads/trackers mặc định", "#EFEFEF", 12f).apply {
+                builtinRow.addView(tv(ctx, "Block ads/trackers mặc định", "#FFFFFF", 12f).apply {
                     layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
                 })
                 val sw = Switch(ctx).apply {
@@ -552,11 +777,11 @@ class DevToolsSheet(
                 addView(divider(ctx).apply { (layoutParams as LinearLayout.LayoutParams).setMargins(0,8.dp,0,8.dp) })
 
                 // Custom patterns
-                addView(tv(ctx, "Custom patterns:", "#888888", 11f))
+                addView(tv(ctx, "Custom patterns:", "#9CA3AF", 11f))
                 val patterns = blocker.getCustomPatterns()
                 patterns.forEach { pattern ->
                     val row2 = row(ctx)
-                    row2.addView(tv(ctx, pattern, "#EFEFEF", 11f).apply {
+                    row2.addView(tv(ctx, pattern, "#FFFFFF", 11f).apply {
                         typeface = android.graphics.Typeface.MONOSPACE
                         layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
                     })
@@ -569,9 +794,9 @@ class DevToolsSheet(
 
                 // Add pattern
                 addView(divider(ctx).apply { (layoutParams as LinearLayout.LayoutParams).setMargins(0,8.dp,0,8.dp) })
-                val addRow = row(ctx, "#141414").apply { setPadding(8.dp,6.dp,8.dp,6.dp) }
+                val addRow = row(ctx, "#1E1E1E").apply { setPadding(8.dp,6.dp,8.dp,6.dp) }
                 val input = editText(ctx, "vd: ads.example.com")
-                val btnAdd = btn(ctx, "Thêm", "#1D9E75", "#FFFFFF")
+                val btnAdd = btn(ctx, "Thêm", "#10B981", "#FFFFFF")
                 addRow.addView(input)
                 addRow.addView(btnAdd)
                 addView(addRow)
@@ -593,8 +818,8 @@ class DevToolsSheet(
             layoutParams = LinearLayout.LayoutParams(MATCH, 0, 1f)
             addView(col(ctx).apply {
                 setPadding(12.dp, 8.dp, 12.dp, 8.dp)
-                addView(tv(ctx, "Current UA:", "#888888", 10f))
-                addView(tv(ctx, current, "#1D9E75", 10f).apply {
+                addView(tv(ctx, "Current UA:", "#9CA3AF", 10f))
+                addView(tv(ctx, current, "#10B981", 10f).apply {
                     typeface = android.graphics.Typeface.MONOSPACE
                     maxLines = 3
                     setPadding(0, 4.dp, 0, 12.dp)
@@ -609,10 +834,10 @@ class DevToolsSheet(
                         lp.setMargins(0, 6.dp, 0, 0)
                         layoutParams = lp
                     }
-                    card.addView(tv(ctx, (if (isActive) "✓ " else "") + name, if (isActive) "#1D9E75" else "#EFEFEF", 13f).apply {
+                    card.addView(tv(ctx, (if (isActive) "✓ " else "") + name, if (isActive) "#10B981" else "#FFFFFF", 13f).apply {
                         typeface = android.graphics.Typeface.DEFAULT_BOLD
                     })
-                    card.addView(tv(ctx, ua, "#888888", 9f).apply {
+                    card.addView(tv(ctx, ua, "#9CA3AF", 9f).apply {
                         typeface = android.graphics.Typeface.MONOSPACE
                         maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
                     })
@@ -629,10 +854,10 @@ class DevToolsSheet(
 
                 // Custom UA input
                 addView(divider(ctx).apply { (layoutParams as LinearLayout.LayoutParams).setMargins(0, 12.dp, 0, 8.dp) })
-                addView(tv(ctx, "Custom UA:", "#888888", 11f))
+                addView(tv(ctx, "Custom UA:", "#9CA3AF", 11f))
                 val customInput = EditText(ctx).apply {
                     setText(current)
-                    setTextColor(Color.parseColor("#EFEFEF"))
+                    setTextColor(Color.parseColor("#FFFFFF"))
                     setHintTextColor(Color.parseColor("#555555"))
                     textSize = 11f
                     typeface = android.graphics.Typeface.MONOSPACE
@@ -641,7 +866,7 @@ class DevToolsSheet(
                     minLines = 2
                 }
                 addView(customInput)
-                addView(btn(ctx, "Áp dụng UA này", "#1D9E75", "#FFFFFF").apply {
+                addView(btn(ctx, "Áp dụng UA này", "#10B981", "#FFFFFF").apply {
                     layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = 8.dp }
                     setOnClickListener {
                         val ua2 = customInput.text.toString().trim()
@@ -681,16 +906,16 @@ class DevToolsSheet(
             ) : RecyclerView.ViewHolder(root)
 
             override fun onCreateViewHolder(parent: ViewGroup, t: Int): VH {
-                val title = tv(ctx, "", "#EFEFEF", 12f).apply { typeface = android.graphics.Typeface.DEFAULT_BOLD; maxLines=1; ellipsize=android.text.TextUtils.TruncateAt.END }
-                val url   = tv(ctx, "", "#888888", 10f).apply { typeface=android.graphics.Typeface.MONOSPACE; maxLines=1; ellipsize=android.text.TextUtils.TruncateAt.MIDDLE; layoutParams=LinearLayout.LayoutParams(0,WRAP,1f) }
+                val title = tv(ctx, "", "#FFFFFF", 12f).apply { typeface = android.graphics.Typeface.DEFAULT_BOLD; maxLines=1; ellipsize=android.text.TextUtils.TruncateAt.END }
+                val url   = tv(ctx, "", "#9CA3AF", 10f).apply { typeface=android.graphics.Typeface.MONOSPACE; maxLines=1; ellipsize=android.text.TextUtils.TruncateAt.MIDDLE; layoutParams=LinearLayout.LayoutParams(0,WRAP,1f) }
                 val del   = btn(ctx, "✕", "#E24B4A")
                 val urlRow = row(ctx)
                 urlRow.addView(url)
                 urlRow.addView(del)
-                val root2 = col(ctx, "#1A1A1A").apply {
+                val root2 = col(ctx, "#1E1E1E").apply {
                     setPadding(12.dp,10.dp,12.dp,10.dp)
                     addView(title); addView(urlRow)
-                    addView(View(ctx).apply { setBackgroundColor(Color.parseColor("#2E2E2E")); layoutParams=LinearLayout.LayoutParams(MATCH,1).apply{topMargin=6.dp} })
+                    addView(View(ctx).apply { setBackgroundColor(Color.parseColor("#333333")); layoutParams=LinearLayout.LayoutParams(MATCH,1).apply{topMargin=6.dp} })
                 }
                 return VH(root2, title, url, del)
             }
@@ -723,7 +948,7 @@ class DevToolsSheet(
     private fun showRequestDetail(req: NetworkRequest) {
         val ctx = requireContext()
         val scrollView = ScrollView(ctx).apply {
-            setBackgroundColor(Color.parseColor("#0D0D0D"))
+            setBackgroundColor(Color.parseColor("#121212"))
         }
         val content = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -792,7 +1017,7 @@ class DevToolsSheet(
                 typeface = android.graphics.Typeface.MONOSPACE
                 setTextIsSelectable(true)
                 setPadding(8.dp, 6.dp, 8.dp, 6.dp)
-                setBackgroundColor(Color.parseColor("#0A0A0A"))
+                setBackgroundColor(Color.parseColor("#121212"))
                 layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
             }
             content.addView(bodyTv)
@@ -806,7 +1031,7 @@ class DevToolsSheet(
         val extraRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(16.dp, 8.dp, 16.dp, 8.dp)
-            setBackgroundColor(Color.parseColor("#141414"))
+            setBackgroundColor(Color.parseColor("#1E1E1E"))
         }
         val btnOkHttp = Button(ctx).apply {
             text = "⚙ OkHttp"; textSize = 11f; setTextColor(Color.parseColor("#4CAF50"))
@@ -840,13 +1065,9 @@ class DevToolsSheet(
 
     // ── Detail view helpers ──────────────────────────────────────────────────
     private fun sectionHeader(ctx: Context, title: String): TextView {
-        return TextView(ctx).apply {
-            text = title
-            setTextColor(Color.parseColor("#1D9E75"))
-            textSize = 12f
+        return tv(ctx, title, "#10B981", 13f).apply {
             typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setPadding(0, 8.dp, 0, 4.dp)
-            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
+            setPadding(0, 12.dp, 0, 8.dp)
         }
     }
 
@@ -855,14 +1076,14 @@ class DevToolsSheet(
             setPadding(0, 2.dp, 0, 2.dp)
             addView(TextView(ctx).apply {
                 text = "$key: "
-                setTextColor(Color.parseColor("#888888"))
+                setTextColor(Color.parseColor("#9CA3AF"))
                 textSize = 10f
                 typeface = android.graphics.Typeface.MONOSPACE
                 layoutParams = LinearLayout.LayoutParams(WRAP, WRAP)
             })
             addView(TextView(ctx).apply {
                 text = value
-                setTextColor(Color.parseColor("#EFEFEF"))
+                setTextColor(Color.parseColor("#FFFFFF"))
                 textSize = 10f
                 typeface = android.graphics.Typeface.MONOSPACE
                 setTextIsSelectable(true)
@@ -873,7 +1094,7 @@ class DevToolsSheet(
 
     private fun sectionDivider(ctx: Context): View {
         return View(ctx).apply {
-            setBackgroundColor(Color.parseColor("#2E2E2E"))
+            setBackgroundColor(Color.parseColor("#333333"))
             layoutParams = LinearLayout.LayoutParams(MATCH, 1).apply { topMargin = 6.dp; bottomMargin = 6.dp }
         }
     }
@@ -898,13 +1119,13 @@ class DevToolsSheet(
 
     private fun addInputRow(ctx: Context, container: LinearLayout, outputTv: TextView,
                             scroll: ScrollView, log: StringBuilder, isDeep: Boolean) {
-        val inputRow = row(ctx, "#141414").apply { setPadding(8.dp,6.dp,8.dp,6.dp) }
-        val prefix = tv(ctx, "JS>", "#1D9E75", 12f).apply {
+        val inputRow = row(ctx, "#1E1E1E").apply { setPadding(8.dp,6.dp,8.dp,6.dp) }
+        val prefix = tv(ctx, "JS>", "#10B981", 12f).apply {
             typeface=android.graphics.Typeface.MONOSPACE; setPadding(0,0,8.dp,0)
         }
         var histIdx = detector.consoleHistory.size
         val jsInput = editText(ctx, "Nhập JS...").apply { layoutParams=LinearLayout.LayoutParams(0,WRAP,1f); maxLines=4 }
-        val btnUp = btn(ctx, "↑", "#888888").apply {
+        val btnUp = btn(ctx, "↑", "#9CA3AF").apply {
             setOnClickListener {
                 val h = detector.consoleHistory
                 if (h.isEmpty()) return@setOnClickListener
@@ -912,7 +1133,7 @@ class DevToolsSheet(
                 jsInput.setText(h[histIdx]); jsInput.setSelection(jsInput.text.length)
             }
         }
-        val btnRun = btn(ctx, "▶", "#1D9E75", "#FFFFFF").apply {
+        val btnRun = btn(ctx, "▶", "#10B981", "#FFFFFF").apply {
             setOnClickListener {
                 val code = jsInput.text.toString().trim(); if (code.isEmpty()) return@setOnClickListener
                 if (detector.consoleHistory.lastOrNull()!=code) { detector.consoleHistory.add(code); if (detector.consoleHistory.size>50) detector.consoleHistory.removeAt(0) }
@@ -980,7 +1201,7 @@ class DevToolsSheet(
         }
         val sv = ScrollView(ctx).apply {
             layoutParams=LinearLayout.LayoutParams(MATCH,0,1f)
-            setBackgroundColor(Color.parseColor("#0D0D0D"))
+            setBackgroundColor(Color.parseColor("#121212"))
             addView(tv2)
         }
         sv.post { sv.fullScroll(View.FOCUS_DOWN) }
@@ -1067,23 +1288,36 @@ class DevToolsSheet(
     }
     private fun btn(ctx: Context, label: String, bg: String, fg: String = bg): Button = Button(ctx).apply {
         text=label; textSize=11f
-        setTextColor(if(fg==bg) Color.parseColor("#888888") else Color.parseColor(fg))
-        if(fg!=bg) setBackgroundColor(Color.parseColor(bg)) else background=null
-        setPadding(10.dp,4.dp,10.dp,4.dp)
-        layoutParams=LinearLayout.LayoutParams(WRAP,WRAP)
+        val hasFg = fg != bg
+        setTextColor(if (hasFg) Color.parseColor(fg) else Color.parseColor("#9CA3AF"))
+        if (hasFg) {
+            setBackgroundColor(Color.parseColor(bg))
+        } else {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                setColor(Color.parseColor("#2D2D2D"))
+                cornerRadius = 8.dp.toFloat()
+                setStroke(1.dp, Color.parseColor("#333333"))
+            }
+        }
+        setPadding(12.dp, 6.dp, 12.dp, 6.dp)
+        layoutParams = LinearLayout.LayoutParams(WRAP, WRAP)
+        stateListAnimator = null
     }
     private fun editText(ctx: Context, hint: String) = EditText(ctx).apply {
-        this.hint=hint; setHintTextColor(Color.parseColor("#444444")); setTextColor(Color.parseColor("#EFEFEF"))
+        this.hint=hint; setHintTextColor(Color.parseColor("#444444")); setTextColor(Color.parseColor("#FFFFFF"))
         textSize=12f; typeface=android.graphics.Typeface.MONOSPACE; background=null
         layoutParams=LinearLayout.LayoutParams(MATCH,WRAP)
     }
     private fun divider(ctx: Context) = View(ctx).apply {
-        setBackgroundColor(Color.parseColor("#2E2E2E")); layoutParams=LinearLayout.LayoutParams(MATCH,1)
+        setBackgroundColor(Color.parseColor("#333333")); layoutParams=LinearLayout.LayoutParams(MATCH,1)
     }
     private fun centerText(ctx: Context, text: String) = TextView(ctx).apply {
-        this.text=text; setTextColor(Color.parseColor("#888888")); textSize=13f; gravity=Gravity.CENTER
-        setPadding(24.dp,48.dp,24.dp,0)
-        layoutParams=FrameLayout.LayoutParams(MATCH,MATCH)
+        this.text = text
+        setTextColor(Color.parseColor("#9CA3AF"))
+        textSize = 13f; gravity = Gravity.CENTER
+        setPadding(24.dp, 56.dp, 24.dp, 0)
+        layoutParams = FrameLayout.LayoutParams(MATCH, MATCH)
     }
     private fun tw(fn: (String)->Unit) = object:TextWatcher {
         override fun afterTextChanged(s: Editable?) { fn(s.toString()) }
@@ -1123,7 +1357,7 @@ class DevToolsSheet(
         val keys = detector.cryptoKeys
         inner.addView(sectionHeader(ctx, "🔑 Captured Keys (${keys.size})"))
         if (keys.isEmpty()) {
-            inner.addView(tv(ctx, "Chưa có key nào. Mở trang có CryptoJS hoặc Web Crypto API.", "#888888", 12f).apply {
+            inner.addView(tv(ctx, "Chưa có key nào. Mở trang có CryptoJS hoặc Web Crypto API.", "#9CA3AF", 12f).apply {
                 setPadding(0, 8.dp, 0, 16.dp)
             })
         } else {
@@ -1132,7 +1366,7 @@ class DevToolsSheet(
                     layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 6.dp }
                 }
                 card.addView(tv(ctx, cap.algorithm, "#4CAF50", 10f))
-                card.addView(tv(ctx, "KEY: ${cap.key}", "#EFEFEF", 11f).apply {
+                card.addView(tv(ctx, "KEY: ${cap.key}", "#FFFFFF", 11f).apply {
                     typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
                 })
                 if (cap.iv.isNotBlank()) card.addView(tv(ctx, "IV:  ${cap.iv}", "#90CAF9", 11f).apply {
@@ -1180,15 +1414,15 @@ class DevToolsSheet(
 
         inner.addView(sectionHeader(ctx, "🔒 Encrypted Responses (${bodies.size})")  )
         if (bodies.isEmpty()) {
-            inner.addView(tv(ctx, "Chưa có. XHR trả về hex IV:CIPHERTEXT sẽ hiện ở đây.", "#888888", 12f).apply { setPadding(0,8.dp,0,16.dp) })
+            inner.addView(tv(ctx, "Chưa có. XHR trả về hex IV:CIPHERTEXT sẽ hiện ở đây.", "#9CA3AF", 12f).apply { setPadding(0,8.dp,0,16.dp) })
         } else {
             bodies.take(5).forEach { rb ->
                 val card = col(ctx, "#2A1A1A").apply { setPadding(10.dp,8.dp,10.dp,8.dp)
                     layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 6.dp }
                 }
                 card.addView(tv(ctx, rb.url.take(70), "#E57373", 10f).apply { typeface = android.graphics.Typeface.MONOSPACE })
-                card.addView(tv(ctx, "HTTP ${rb.statusCode} • ${rb.body.length} chars", "#888888", 9f))
-                card.addView(tv(ctx, rb.body.take(80) + "…", "#EFEFEF", 10f).apply {
+                card.addView(tv(ctx, "HTTP ${rb.statusCode} • ${rb.body.length} chars", "#9CA3AF", 9f))
+                card.addView(tv(ctx, rb.body.take(80) + "…", "#FFFFFF", 10f).apply {
                     typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
                 })
                 val btnCopyBody = btn(ctx, "Copy", "#2A1A1A", "#E57373").apply { setOnClickListener { copy(rb.body) } }
@@ -1219,10 +1453,10 @@ class DevToolsSheet(
                 tvResult.text = aesDecrypt(cipher, key)
             }
         }
-        val btnFillLast = btn(ctx, "↓ Fill last body", "#1A1A1A").apply {
+        val btnFillLast = btn(ctx, "↓ Fill last body", "#1E1E1E").apply {
             setOnClickListener { bodies.firstOrNull()?.let { inputCipher.setText(it.body) } }
         }
-        val btnFillKey  = btn(ctx, "↓ Fill last key", "#1A1A1A").apply {
+        val btnFillKey  = btn(ctx, "↓ Fill last key", "#1E1E1E").apply {
             setOnClickListener { keys.firstOrNull()?.let { inputKey.setText(it.key) } }
         }
         val btnRow = row(ctx).apply { gravity = android.view.Gravity.START }
@@ -1338,28 +1572,103 @@ class DevToolsSheet(
             addView(inner)
         }
         val msgs = detector.wsMessages
-        inner.addView(sectionHeader(ctx, "WebSocket Messages (${msgs.size})"))
+        val wsUrl = msgs.firstOrNull()?.wsUrl ?: ""
+
+        // ── WebSocket URL bar + CONNECTED badge ──────────────────────
+        if (wsUrl.isNotBlank()) {
+            val urlRow = row(ctx, "#1E1E1E").apply {
+                layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 8.dp }
+                setPadding(10.dp, 8.dp, 10.dp, 8.dp)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                    setColor(Color.parseColor("#1E1E1E"))
+                    cornerRadius = 8.dp.toFloat()
+                    setStroke(1.dp, Color.parseColor("#333333"))
+                }
+            }
+            val tvUrl = TextView(ctx).apply {
+                text = wsUrl.take(80)
+                setTextColor(Color.parseColor("#B0B0B0"))
+                textSize = 10f
+                typeface = android.graphics.Typeface.MONOSPACE
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
+            }
+            val tvConn = TextView(ctx).apply {
+                text = "CONNECTED"
+                setTextColor(Color.WHITE)
+                textSize = 9f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                setPadding(8.dp, 2.dp, 8.dp, 2.dp)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                    setColor(Color.parseColor("#10B981"))
+                    cornerRadius = 4f
+                }
+                layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = 8.dp }
+            }
+            urlRow.addView(tvUrl)
+            urlRow.addView(tvConn)
+            inner.addView(urlRow)
+        }
+
+        inner.addView(sectionHeader(ctx, "Messages (${msgs.size})"))
         if (msgs.isEmpty()) {
-            inner.addView(tv(ctx, "Chưa có WS message. Mở trang dùng WebSocket API.", "#888", 12f)
+            inner.addView(tv(ctx, "No WebSocket messages yet. Open a page using the WebSocket API.", "#757575", 12f)
                 .apply { setPadding(0, 8.dp, 0, 0) })
         } else {
             msgs.take(50).forEach { msg ->
-                val bg = when(msg.direction) {
-                    "open"  -> "#1A2A1A"; "send" -> "#2A1A1A"; "recv" -> "#1A1A2A"; else -> "#1A1A1A"
+                val (badgeText, badgeColor, badgeFg) = when (msg.direction) {
+                    "open"  -> Triple("OPEN",  "#10B981", Color.WHITE)
+                    "send"  -> Triple("SENT",  "#2196F3", Color.WHITE)
+                    "recv"  -> Triple("RECV",  "#FF9800", Color.WHITE)
+                    else    -> Triple("EVENT", "#6B7280", Color.WHITE)
                 }
-                val icon = when(msg.direction) { "open"->"🟢"; "send"->"↑"; "recv"->"↓"; else->"✖" }
-                val card = col(ctx, bg).apply {
-                    setPadding(8.dp, 6.dp, 8.dp, 6.dp)
-                    layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 4.dp }
+                val card = col(ctx, "#1E1E1E").apply {
+                    setPadding(10.dp, 8.dp, 10.dp, 8.dp)
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                        setColor(Color.parseColor("#1E1E1E"))
+                        cornerRadius = 4.dp.toFloat()
+                        setStroke(1.dp, Color.parseColor("#333333"))
+                    }
+                    layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 6.dp }
                 }
-                card.addView(tv(ctx, "$icon ${msg.wsUrl.take(60)}", "#EFEFEF", 10f).apply {
-                    typeface = android.graphics.Typeface.MONOSPACE })
+                // Header row: badge + URL + (right-aligned) copy
+                val top = row(ctx).apply { setPadding(0,0,0,4.dp) }
+                val tvBadge = TextView(ctx).apply {
+                    text = badgeText
+                    setTextColor(badgeFg)
+                    textSize = 9f
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                    setPadding(6.dp, 1.dp, 6.dp, 1.dp)
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                        setColor(badgeColor)
+                        cornerRadius = 3f
+                    }
+                }
+                val tvUrl = TextView(ctx).apply {
+                    text = "  ${msg.wsUrl.take(60)}"
+                    setTextColor(Color.parseColor("#B0B0B0"))
+                    textSize = 10f
+                    typeface = android.graphics.Typeface.MONOSPACE
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
+                }
+                top.addView(tvBadge)
+                top.addView(tvUrl)
+                card.addView(top)
                 if (msg.data.isNotBlank()) {
-                    card.addView(tv(ctx, msg.data.take(200), "#AAAAAA", 10f).apply {
+                    card.addView(tv(ctx, msg.data.take(300), "#B0B0B0", 10f).apply {
                         typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
                     })
                 }
-                card.addView(btn(ctx, "Copy", bg).apply { setOnClickListener { copy(msg.data) } })
+                card.addView(btn(ctx, "Copy", "#2A2A2A", "#9CA3AF").apply {
+                    setOnClickListener { copy(msg.data) }
+                })
                 inner.addView(card)
             }
         }
@@ -1386,7 +1695,7 @@ class DevToolsSheet(
         } else {
             val parsed = CookieExporter.parse(raw)
             parsed.forEach { (k, v) ->
-                val rowLayout = row(ctx, "#141414").apply {
+                val rowLayout = row(ctx, "#1E1E1E").apply {
                     setPadding(8.dp, 6.dp, 8.dp, 6.dp)
                     layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 3.dp }
                 }
@@ -1395,7 +1704,7 @@ class DevToolsSheet(
                     layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
                     typeface = android.graphics.Typeface.MONOSPACE
                 }
-                val valTv  = tv(ctx, v.take(40) + if (v.length > 40) "…" else "", "#EFEFEF", 10f).apply {
+                val valTv  = tv(ctx, v.take(40) + if (v.length > 40) "…" else "", "#FFFFFF", 10f).apply {
                     layoutParams = LinearLayout.LayoutParams(0, WRAP, 2f)
                     typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
                 }
@@ -1425,7 +1734,7 @@ class DevToolsSheet(
             "Header line"  to CookieExporter.toHeaderLine(url)
         )
         exports.forEach { (label, value) ->
-            inner.addView(btn(ctx, "Copy $label", "#1A1A1A").apply {
+            inner.addView(btn(ctx, "Copy $label", "#1E1E1E").apply {
                 setOnClickListener { copy(value); Toast.makeText(ctx,"$label copied",Toast.LENGTH_SHORT).show() }
             })
         }
@@ -1439,11 +1748,11 @@ class DevToolsSheet(
         val sv  = android.widget.ScrollView(ctx)
         val col = col(ctx).apply { setPadding(16.dp, 8.dp, 16.dp, 16.dp) }
         col.addView(tv(ctx, "Header:", "#64B5F6", 11f))
-        col.addView(tv(ctx, info.header, "#EFEFEF", 10f).apply {
+        col.addView(tv(ctx, info.header, "#FFFFFF", 10f).apply {
             typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
         })
         col.addView(tv(ctx, "Payload:", "#64B5F6", 11f).apply { setPadding(0, 8.dp, 0, 0) })
-        col.addView(tv(ctx, info.payload, "#EFEFEF", 10f).apply {
+        col.addView(tv(ctx, info.payload, "#FFFFFF", 10f).apply {
             typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
         })
         val expColor = if (info.isExpired) "#E57373" else "#4CAF50"
@@ -1523,7 +1832,7 @@ class DevToolsSheet(
             appendLine("Crypto keys: ${detector.cryptoCount()}")
             val cookies = CookieExporter.toDocument(url)
             appendLine("Cookies: ${if (cookies.isBlank()) "none" else "${cookies.split(";").size} entries"}")
-        }, "#EFEFEF", 11f))
+        }, "#FFFFFF", 11f))
 
         contentFrame.removeAllViews()
         contentFrame.addView(sv)
@@ -1531,7 +1840,7 @@ class DevToolsSheet(
 
     private fun showCodeDialog(ctx: android.content.Context, title: String, code: String) {
         val sv  = android.widget.ScrollView(ctx)
-        val tvCode = tv(ctx, code, "#EFEFEF", 10f).apply {
+        val tvCode = tv(ctx, code, "#FFFFFF", 10f).apply {
             typeface = android.graphics.Typeface.MONOSPACE
             setTextIsSelectable(true)
             setPadding(16.dp, 8.dp, 16.dp, 8.dp)
@@ -1586,7 +1895,7 @@ class DevToolsSheet(
         sv.addView(inner)
 
         inner.addView(sectionHeader(ctx, "💾 localStorage & sessionStorage"))
-        val tvResult = tv(ctx, "Đang đọc...", "#EFEFEF", 10f).apply {
+        val tvResult = tv(ctx, "Đang đọc...", "#FFFFFF", 10f).apply {
             typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
         }
         inner.addView(tvResult)
@@ -1622,7 +1931,7 @@ class DevToolsSheet(
                     tvResult.text = sb.toString()
 
                     // Add copy + clear buttons
-                    val btnCopy = btn(ctx, "Copy All", "#1A1A1A").apply {
+                    val btnCopy = btn(ctx, "Copy All", "#1E1E1E").apply {
                         setOnClickListener { copy(sb.toString()) }
                     }
                     val btnClearLs = btn(ctx, "🗑 Clear localStorage", "#2A1A1A", "#E57373").apply {
@@ -1703,11 +2012,11 @@ class DevToolsSheet(
             "🌑 Dark override" to """* { background: #111 !important; color: #eee !important; } a { color: #64b5f6 !important; }""",
             "🙈 Hide ads"       to """.ad,.ads,.advertisement,[id*=ad],[class*=ad],iframe[src*=ad] { display:none!important; }""",
             "👁 Show hidden"    to """[style*="display:none"],[hidden] { display:block!important; visibility:visible!important; }""",
-            "🔍 Highlight video" to """video { outline: 3px solid #1D9E75 !important; }""",
+            "🔍 Highlight video" to """video { outline: 3px solid #10B981 !important; }""",
             "📐 Desktop layout"  to """body { min-width: 1280px !important; zoom: 0.7; }"""
         )
         presets.forEach { (label, css) ->
-            inner.addView(btn(ctx, label, "#141414").apply {
+            inner.addView(btn(ctx, label, "#1E1E1E").apply {
                 setOnClickListener { inputCss.setText(css) }
             })
         }
@@ -1741,7 +2050,7 @@ class DevToolsSheet(
         }
         inner.addView(inputHeaders)
 
-        val tvResponse = tv(ctx, "", "#EFEFEF", 10f).apply {
+        val tvResponse = tv(ctx, "", "#FFFFFF", 10f).apply {
             typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
             setPadding(0, 8.dp, 0, 0)
         }
@@ -1760,7 +2069,7 @@ class DevToolsSheet(
                     inner.addView(sectionHeader(ctx, "Response: HTTP $status"))
                     tvResponse.text = body.take(5000)
                     inner.addView(tvResponse)
-                    inner.addView(btn(ctx, "Copy Response", "#1A1A1A").apply {
+                    inner.addView(btn(ctx, "Copy Response", "#1E1E1E").apply {
                         setOnClickListener { copy(body) }
                     })
                 }
@@ -1839,10 +2148,10 @@ class NetworkAdapter(
     override fun onCreateViewHolder(parent: ViewGroup, t: Int): VH {
         val ctx = parent.context; val d=ctx.resources.displayMetrics.density; fun Int.dp()=(this*d).toInt()
         val tvTag  = TextView(ctx).apply{textSize=9f;typeface=android.graphics.Typeface.DEFAULT_BOLD;setPadding(6.dp(),2.dp(),6.dp(),2.dp());minWidth=52.dp();gravity=Gravity.CENTER;layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT).apply{marginEnd=8.dp()}}
-        val tvHost = TextView(ctx).apply{setTextColor(Color.parseColor("#EFEFEF"));textSize=11f;typeface=android.graphics.Typeface.DEFAULT_BOLD;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END}
-        val tvPath = TextView(ctx).apply{setTextColor(Color.parseColor("#888888"));textSize=10f;typeface=android.graphics.Typeface.MONOSPACE;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.MIDDLE}
+        val tvHost = TextView(ctx).apply{setTextColor(Color.parseColor("#FFFFFF"));textSize=11f;typeface=android.graphics.Typeface.DEFAULT_BOLD;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END}
+        val tvPath = TextView(ctx).apply{setTextColor(Color.parseColor("#9CA3AF"));textSize=10f;typeface=android.graphics.Typeface.MONOSPACE;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.MIDDLE}
         val info   = LinearLayout(ctx).apply{orientation=LinearLayout.VERTICAL;layoutParams=LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1f);addView(tvHost);addView(tvPath)}
-        val row    = LinearLayout(ctx).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setPadding(12.dp(),10.dp(),12.dp(),10.dp());setBackgroundColor(Color.parseColor("#1A1A1A"));addView(tvTag);addView(info)}
+        val row    = LinearLayout(ctx).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setPadding(12.dp(),10.dp(),12.dp(),10.dp());setBackgroundColor(Color.parseColor("#1E1E1E"));addView(tvTag);addView(info)}
         val root   = LinearLayout(ctx).apply{orientation=LinearLayout.VERTICAL;layoutParams=ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.WRAP_CONTENT);addView(row);addView(View(ctx).apply{setBackgroundColor(Color.parseColor("#252525"));layoutParams=LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,1)})}
         return VH(root,tvTag,tvHost,tvPath)
     }
@@ -1872,16 +2181,16 @@ class NetworkAdapter(
             orientation = android.widget.LinearLayout.VERTICAL
         }
         // Header row
-        val header = row(ctx, "#141414").apply {
+        val header = row(ctx, "#1E1E1E").apply {
             setPadding(8.dp, 6.dp, 8.dp, 6.dp)
         }
-        header.addView(tv(ctx, "Tag", "#EFEFEF", 9f).apply {
+        header.addView(tv(ctx, "Tag", "#FFFFFF", 9f).apply {
             layoutParams = android.widget.LinearLayout.LayoutParams(36.dp, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
         })
-        header.addView(tv(ctx, "Host / Timeline (+ms)", "#EFEFEF", 9f).apply {
+        header.addView(tv(ctx, "Host / Timeline (+ms)", "#FFFFFF", 9f).apply {
             layoutParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
-        header.addView(tv(ctx, "Status", "#EFEFEF", 9f).apply {
+        header.addView(tv(ctx, "Status", "#FFFFFF", 9f).apply {
             layoutParams = android.widget.LinearLayout.LayoutParams(36.dp, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
         })
         outer.addView(header)
@@ -1926,7 +2235,7 @@ class NetworkAdapter(
                 setBackgroundColor(android.graphics.Color.parseColor(req.tagColor))
             }
             // Host label
-            val hostTv = tv(ctx, req.host.take(20), "#AAAAAA", 8f).apply {
+            val hostTv = tv(ctx, req.host.take(20), "#B0B0B0", 8f).apply {
                 layoutParams = android.widget.LinearLayout.LayoutParams(0, MATCH, 1f - relStart - barW)
                 gravity = android.view.Gravity.CENTER_VERTICAL
                 setPadding(4.dp, 0, 0, 0)
@@ -1942,7 +2251,7 @@ class NetworkAdapter(
             // Status
             val statusTv = tv(ctx,
                 if (req.statusCode > 0) req.statusCode.toString() else "…",
-                if (req.statusCode in 200..299) "#4CAF50" else if (req.statusCode >= 400) "#E57373" else "#888888",
+                if (req.statusCode in 200..299) "#4CAF50" else if (req.statusCode >= 400) "#E57373" else "#9CA3AF",
                 8f
             ).apply {
                 layoutParams = android.widget.LinearLayout.LayoutParams(36.dp, WRAP)
@@ -1980,12 +2289,12 @@ class NetworkAdapter(
             inner.addView(tv(ctx, "Không có request mới so với snapshot.", "#888", 12f))
         } else {
             newReqs.forEach { req ->
-                val card = col(ctx, "#141414").apply {
+                val card = col(ctx, "#1E1E1E").apply {
                     setPadding(8.dp, 5.dp, 8.dp, 5.dp)
                     layoutParams = android.widget.LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 3.dp }
                     setOnClickListener { showRequestDetail(req) }
                 }
-                val color = if (req.isStream) "#4CAF50" else "#EFEFEF"
+                val color = if (req.isStream) "#4CAF50" else "#FFFFFF"
                 card.addView(tv(ctx, "[${req.tag}] ${req.host}${req.path.take(50)}", color, 10f))
                 card.addView(tv(ctx, req.url.take(80), "#666", 9f).apply {
                     typeface = android.graphics.Typeface.MONOSPACE
@@ -2017,7 +2326,7 @@ class NetworkAdapter(
 
         // ── Service Worker ──
         inner.addView(sectionHeader(ctx, "⚙ Service Workers"))
-        val tvSw = tv(ctx, "Đang kiểm tra...", "#EFEFEF", 10f).apply {
+        val tvSw = tv(ctx, "Đang kiểm tra...", "#FFFFFF", 10f).apply {
             typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
         }
         inner.addView(tvSw)
@@ -2079,7 +2388,7 @@ class NetworkAdapter(
 
         // ── IndexedDB ──
         inner.addView(sectionHeader(ctx, "🗄 IndexedDB"))
-        val tvIdb = tv(ctx, "Đang kiểm tra...", "#EFEFEF", 10f).apply {
+        val tvIdb = tv(ctx, "Đang kiểm tra...", "#FFFFFF", 10f).apply {
             typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
         }
         inner.addView(tvIdb)
@@ -2138,7 +2447,7 @@ class NetworkAdapter(
         // Quick selector presets
         val presetRow = row(ctx)
         listOf("video","audio","iframe","[src]","[data-src]","img").forEach { sel ->
-            presetRow.addView(btn(ctx, sel, "#1A1A1A", "#90CAF9").apply {
+            presetRow.addView(btn(ctx, sel, "#1E1E1E", "#90CAF9").apply {
                 textSize = 9f; setPadding(6.dp, 4.dp, 6.dp, 4.dp)
                 setOnClickListener { etSel.setText(sel); inspectSelector(sel, inner, sv) }
             })
@@ -2156,7 +2465,7 @@ class NetworkAdapter(
         inner.addView(row(ctx).apply { addView(btnInspect); addView(btnTree) })
 
         // Results area
-        val tvResults = tv(ctx, "", "#EFEFEF", 10f).apply {
+        val tvResults = tv(ctx, "", "#FFFFFF", 10f).apply {
             typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
         }
         inner.addView(tvResults)
@@ -2231,7 +2540,7 @@ class NetworkAdapter(
     private fun buildElementCard(ctx: Context, el: org.json.JSONObject, idx: Int,
                                   label: String, src: String, text: String,
                                   visible: Boolean, rect: org.json.JSONObject?): android.view.View {
-        val card = col(ctx, "#141414").apply {
+        val card = col(ctx, "#1E1E1E").apply {
             setPadding(8.dp, 6.dp, 8.dp, 6.dp)
             layoutParams = android.widget.LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 4.dp }
         }
@@ -2243,7 +2552,7 @@ class NetworkAdapter(
         if (src.isNotBlank()) card.addView(tv(ctx, "src: ${src.take(80)}", "#64B5F6", 10f).apply {
             setTextIsSelectable(true)
         })
-        if (text.isNotBlank()) card.addView(tv(ctx, "text: $text", "#AAAAAA", 10f))
+        if (text.isNotBlank()) card.addView(tv(ctx, "text: $text", "#B0B0B0", 10f))
 
         // Attributes
         val attrs = el.optJSONObject("attrs")
@@ -2251,7 +2560,7 @@ class NetworkAdapter(
             val attrStr = attrs.keys().asSequence().take(6).joinToString("  ") { k ->
                 "$k=\"${attrs.optString(k).take(30)}\""
             }
-            card.addView(tv(ctx, attrStr, "#888888", 9f).apply { typeface = android.graphics.Typeface.MONOSPACE })
+            card.addView(tv(ctx, attrStr, "#9CA3AF", 9f).apply { typeface = android.graphics.Typeface.MONOSPACE })
         }
 
         // Actions
@@ -2262,7 +2571,7 @@ class NetworkAdapter(
                     (function(){
                         var el = document.querySelectorAll("${el.optString("tag")}")[${idx}];
                         if (!el) return;
-                        el.style.outline='4px solid #1D9E75';
+                        el.style.outline='4px solid #10B981';
                         el.scrollIntoView({behavior:'smooth', block:'center'});
                         setTimeout(function(){ el.style.outline=''; }, 3000);
                     })()
@@ -2271,7 +2580,7 @@ class NetworkAdapter(
             }
         }
         if (src.isNotBlank()) {
-            val btnCopySrc = btn(ctx, "Copy src", "#1A1A1A").apply {
+            val btnCopySrc = btn(ctx, "Copy src", "#1E1E1E").apply {
                 setOnClickListener { copy(src) }
             }
             actionRow.addView(btnCopySrc)
@@ -2292,7 +2601,7 @@ class NetworkAdapter(
         val etValue = editText(ctx, "New value")
         val col2 = col(ctx).apply {
             setPadding(16.dp, 8.dp, 16.dp, 8.dp)
-            addView(tv(ctx, "Element: <$tag> [$idx]", "#EFEFEF", 11f))
+            addView(tv(ctx, "Element: <$tag> [$idx]", "#FFFFFF", 11f))
             addView(etAttr); addView(etValue)
         }
         AlertDialog.Builder(ctx).setTitle("✏ Edit Attribute").setView(col2)
@@ -2367,7 +2676,7 @@ class NetworkAdapter(
         val currentPort = System.getProperty("http.proxyPort") ?: ""
         val tvStatus = tv(ctx,
             if (currentHost.isNotBlank()) "Current: $currentHost:$currentPort" else "Proxy: OFF",
-            if (currentHost.isNotBlank()) "#4CAF50" else "#888888", 11f
+            if (currentHost.isNotBlank()) "#4CAF50" else "#9CA3AF", 11f
         ).apply { setPadding(0, 0, 0, 8.dp) }
         inner.addView(tvStatus)
 
@@ -2377,7 +2686,7 @@ class NetworkAdapter(
                 val port = etPort.text.toString().trim().toIntOrNull() ?: 0
                 (activity as? com.aho.streambrowser.ui.MainActivity)?.setHttpProxy(host, port)
                 tvStatus.text = if (host.isNotBlank()) "Current: $host:$port" else "Proxy: OFF"
-                tvStatus.setTextColor(android.graphics.Color.parseColor(if (host.isNotBlank()) "#4CAF50" else "#888888"))
+                tvStatus.setTextColor(android.graphics.Color.parseColor(if (host.isNotBlank()) "#4CAF50" else "#9CA3AF"))
             }
         }
         val btnClear = btn(ctx, "🗑 Clear Proxy", "#2A1A1A", "#E57373").apply {
@@ -2385,7 +2694,7 @@ class NetworkAdapter(
                 etHost.setText(""); etPort.setText("")
                 (activity as? com.aho.streambrowser.ui.MainActivity)?.setHttpProxy("", 0)
                 tvStatus.text = "Proxy: OFF"
-                tvStatus.setTextColor(android.graphics.Color.parseColor("#888888"))
+                tvStatus.setTextColor(android.graphics.Color.parseColor("#9CA3AF"))
             }
         }
         inner.addView(row(ctx).apply { addView(btnSet); addView(btnClear) })
@@ -2399,7 +2708,7 @@ class NetworkAdapter(
 3. Charles port mặc định: 8888 | Burp: 8080
 4. Nhập host+port ở trên → Set Proxy
 5. Cài Charles/Burp SSL cert vào điện thoại
-6. Bật SSL bypass (tab Network → 🔒 SSL)""", "#EFEFEF", 11f).apply {
+6. Bật SSL bypass (tab Network → 🔒 SSL)""", "#FFFFFF", 11f).apply {
             typeface = android.graphics.Typeface.MONOSPACE
         })
 
@@ -2455,7 +2764,7 @@ class NetworkAdapter(
             androidx.lifecycle.ViewModelProvider(it).get(com.aho.streambrowser.viewmodel.BrowserViewModel::class.java)
         }
         inner.addView(sectionHeader(ctx, "📚 Browsing History (Room DB)"))
-        val tvHist = tv(ctx, "Đang tải...", "#EFEFEF", 11f).apply { setTextIsSelectable(true) }
+        val tvHist = tv(ctx, "Đang tải...", "#FFFFFF", 11f).apply { setTextIsSelectable(true) }
         inner.addView(tvHist)
         scope.launch {
             val items = vm?.history?.value ?: emptyList()
@@ -2464,16 +2773,16 @@ class NetworkAdapter(
                 else {
                     inner.removeView(tvHist)
                     items.take(50).forEach { entry ->
-                        val row2 = row(ctx, "#141414").apply {
+                        val row2 = row(ctx, "#1E1E1E").apply {
                             setPadding(8.dp, 6.dp, 8.dp, 6.dp)
                             layoutParams = android.widget.LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 2.dp }
                             setOnClickListener { (activity as? com.aho.streambrowser.ui.MainActivity)?.navigateTo(entry.url) }
                         }
                         val col2 = col(ctx)
-                        col2.addView(tv(ctx, entry.title.take(50), "#EFEFEF", 11f))
+                        col2.addView(tv(ctx, entry.title.take(50), "#FFFFFF", 11f))
                         col2.addView(tv(ctx, entry.url.take(60), "#666", 9f).apply { typeface = android.graphics.Typeface.MONOSPACE })
                         row2.addView(col2.apply { layoutParams = android.widget.LinearLayout.LayoutParams(0, WRAP, 1f) })
-                        row2.addView(btn(ctx, "Copy", "#1A1A1A").apply {
+                        row2.addView(btn(ctx, "Copy", "#1E1E1E").apply {
                             textSize = 9f; setOnClickListener { copy(entry.url) }
                         })
                         inner.addView(row2)
@@ -2490,7 +2799,7 @@ class NetworkAdapter(
             post {
                 if (streams.isEmpty()) inner.addView(tv(ctx, "Chưa có stream history.", "#888", 11f))
                 else streams.take(30).forEach { s ->
-                    val card = col(ctx, "#141414").apply {
+                    val card = col(ctx, "#1E1E1E").apply {
                         setPadding(8.dp, 5.dp, 8.dp, 5.dp)
                         layoutParams = android.widget.LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 3.dp }
                     }
