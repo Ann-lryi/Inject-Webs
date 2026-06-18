@@ -410,9 +410,19 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, if (host.isBlank()) "Proxy cleared" else "Proxy: $host:$port", Toast.LENGTH_SHORT).show()
     }
 
+    private var devToolsOverlay: DevToolsOverlay? = null
+
     private fun openDevTools() {
-        DevToolsSheet(detector, b.webView, this) { playStream(it) }
-            .show(supportFragmentManager, DevToolsSheet.TAG)
+        if (devToolsOverlay == null) {
+            devToolsOverlay = DevToolsOverlay(this, detector, b.webView, this) { playStream(it) }
+            val root = window.decorView as android.widget.FrameLayout
+            root.addView(devToolsOverlay, android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+            ))
+            devToolsOverlay?.visibility = android.view.View.GONE
+        }
+        devToolsOverlay?.show()
     }
 
     private fun playStream(item: StreamItem) {
