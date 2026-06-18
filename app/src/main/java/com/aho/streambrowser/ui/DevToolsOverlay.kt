@@ -177,8 +177,8 @@ class DevToolsOverlay(
         val scroll = HorizontalScrollView(context).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT)
-            scrollbars = View.SCROLLBARS_NONE
-            overScrollMode = View.OVER_SCROLL_NEVER
+            isVerticalScrollBarEnabled = false
+isHorizontalScrollBarEnabled = false
         }
         val strip = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
