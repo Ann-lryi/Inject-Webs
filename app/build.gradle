@@ -9,7 +9,6 @@ plugins {
 android {
     namespace 'com.aho.streambrowser'
     compileSdk 36
-    useLibrary 'org.apache.http.legacy'
     defaultConfig {
         applicationId "com.aho.streambrowser"
         minSdk 24; targetSdk 36

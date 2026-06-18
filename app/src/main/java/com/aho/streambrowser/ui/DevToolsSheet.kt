@@ -593,7 +593,7 @@ class DevToolsSheet(
             setOnClickListener {
                 scope.launch {
                     val har = HarExporter.export(detector.requests)
-                    post { showCodeDialog(requireContext(), "HAR Export (${detector.requestCount()} requests)", har) }
+                    contentFrame.post { showCodeDialog(requireContext(), "HAR Export (${detector.requestCount()} requests)", har) }
                 }
             }
         }
@@ -1397,7 +1397,7 @@ class DevToolsSheet(
                 }.map { it.url }.take(15)
                 scope.launch {
                     val found = AesKeyFinder.scanJsFiles(jsUrls, webView.url ?: "")
-                    post {
+                    contentFrame.post {
                         text = "Scan JS Files for Keys"
                         if (found.isEmpty()) {
                             Toast.makeText(requireContext(), "Không tìm thấy key nào trong ${jsUrls.size} JS files", Toast.LENGTH_SHORT).show()
@@ -2091,8 +2091,8 @@ class DevToolsSheet(
                 val status = resp.code
                 val body   = resp.body?.string()?.take(50000) ?: ""
                 resp.close()
-                post { onResult(status, body) }
-            } catch (e: Exception) { post { onResult(-1, e.message ?: "Error") } }
+                contentFrame.post { onResult(status, body) }
+            } catch (e: Exception) { contentFrame.post { onResult(-1, e.message ?: "Error") } }
         }
     }
 
@@ -2769,7 +2769,7 @@ class DevToolsSheet(
         inner.addView(tvHist)
         scope.launch {
             val items = vm?.history?.value ?: emptyList()
-            post {
+            contentFrame.post {
                 if (items.isEmpty()) { tvHist.text = "Chưa có history." }
                 else {
                     inner.removeView(tvHist)
@@ -2797,7 +2797,7 @@ class DevToolsSheet(
         inner.addView(sectionHeader(ctx, "🎬 Stream History (Room DB)"))
         scope.launch {
             val streams = vm?.getRecentStreams() ?: emptyList()
-            post {
+            contentFrame.post {
                 if (streams.isEmpty()) inner.addView(tv(ctx, "Chưa có stream history.", "#888", 11f))
                 else streams.take(30).forEach { s ->
                     val card = col(ctx, "#1E1E1E").apply {
