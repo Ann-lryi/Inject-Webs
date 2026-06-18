@@ -19,9 +19,8 @@ class BrowserWebViewClient(
     /** J1: SSL certificate error bypass (dev/reverse-engineering use only)
      *  NOTE: android.net.http.SslErrorHandler was removed from the public
      *  SDK stubs in API 34+, so we can no longer override onReceivedSslError
-     *  with the original signature. To re-enable SSL bypass, downgrade
-     *  compileSdk to 33 in app/build.gradle. The flag below is kept for
-     *  forward-compatibility but currently has no effect on compileSdk 34+. */
+     *  with the original signature. The flag is kept for forward-compat but
+     *  has no effect on compileSdk 34+. To re-enable, downgrade compileSdk to 33. */
     @Suppress("unused")
     var sslBypassEnabled = false
 

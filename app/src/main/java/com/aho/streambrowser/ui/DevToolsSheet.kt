@@ -29,10 +29,8 @@ import javax.crypto.spec.SecretKeySpec
 import com.aho.streambrowser.model.NetworkRequest
 import com.aho.streambrowser.model.StreamItem
 import com.aho.streambrowser.util.*
-import com.google.android.material.bottomsheet.BottomSheetBehavior
-import com.google.android.material.bottomsheet.BottomSheetDialog
-import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.google.android.material.tabs.TabLayout
+import androidx.fragment.app.Fragment
 import kotlinx.coroutines.*
 
 import dagger.hilt.android.AndroidEntryPoint
@@ -43,7 +41,7 @@ class DevToolsSheet(
     private val webView: WebView,
     private val activity: MainActivity,
     private val onPlayStream: (StreamItem) -> Unit
-) : BottomSheetDialogFragment() {
+) : Fragment() {
 
     private lateinit var tabLayout: TabLayout
     private lateinit var contentFrame: FrameLayout
@@ -53,65 +51,60 @@ class DevToolsSheet(
     override fun onCreateView(i: LayoutInflater, c: ViewGroup?, s: Bundle?) = buildRoot()
     override fun onDestroyView() { super.onDestroyView(); scope.cancel() }
 
-    // ── Fix: Configure bottom sheet to take ~60% of screen, not full screen ──
-    override fun onCreateDialog(savedInstanceState: Bundle?) = super.onCreateDialog(savedInstanceState).also { dialog ->
-        dialog.setOnShowListener { dlg ->
-            val bottomSheet = (dlg as? BottomSheetDialog)?.findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)
-            bottomSheet?.let {
-                val behavior = BottomSheetBehavior.from(it)
-                // Set to PEER at 60% height - prevents full expansion
-                val displayMetrics = resources.displayMetrics
-                val sheetHeight = (displayMetrics.heightPixels * 0.60).toInt()
-                behavior.peekHeight = sheetHeight
-                behavior.expandedOffset = (displayMetrics.heightPixels * 0.40).toInt()
-                // Lock to collapsed/half-expanded only - no full expansion
-                behavior.isHideable = false
-                behavior.skipCollapsed = false
-                // Set to half-expanded state
-                behavior.state = BottomSheetBehavior.STATE_HALF_EXPANDED
-                // Set max height
-                it.layoutParams = it.layoutParams.apply {
-                    height = sheetHeight
-                }
-            }
-        }
+    /** Called by MainActivity's Hide button to close this panel. */
+    fun close() {
+        parentFragmentManager.beginTransaction().remove(this).commit()
     }
 
     // ── Root ──────────────────────────────────────────────────────────────────
     private fun buildRoot(): View {
         val ctx = requireContext()
-        val outer = col(ctx, "#1E1E1E")
+        val outer = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = FrameLayout.LayoutParams(MATCH, MATCH)
+            setBackgroundColor(Color.parseColor("#1E1E1E"))
+        }
 
-        // Drag handle
-        outer.addView(LinearLayout(ctx).apply {
-            gravity = Gravity.CENTER_HORIZONTAL
-            addView(View(ctx).apply {
-                setBackgroundColor(Color.parseColor("#555555"))
-                layoutParams = LinearLayout.LayoutParams(40.dp, 4.dp).apply { topMargin = 8.dp; bottomMargin = 8.dp }
-            })
-        })
-
-        // ── DevTools Pro • LIVE header ───────────────────────────────────
-        val header = row(ctx, "#1E1E1E").apply {
+        // ── Top bar: Hide button + DevTools Pro v5 + LIVE indicator ───────
+        val topBar = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(8.dp, 6.dp, 8.dp, 6.dp)
+            setBackgroundColor(Color.parseColor("#1E1E1E"))
             layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
-            setPadding(16.dp, 6.dp, 12.dp, 6.dp)
+        }
+        val btnHide = android.widget.TextView(ctx).apply {
+            text = "Hide"
+            setTextColor(Color.WHITE)
+            textSize = 11f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setPadding(10.dp, 4.dp, 10.dp, 4.dp)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                setColor(Color.parseColor("#10B981"))
+                cornerRadius = 16.dp.toFloat()
+            }
+            setOnClickListener { close() }
+            layoutParams = LinearLayout.LayoutParams(WRAP, WRAP)
         }
         val ivBolt = android.widget.ImageView(ctx).apply {
             setImageResource(com.aho.streambrowser.R.drawable.ic_lightning)
             setColorFilter(Color.parseColor("#10B981"))
-            layoutParams = LinearLayout.LayoutParams(20.dp, 20.dp).apply { marginEnd = 8.dp }
+            layoutParams = LinearLayout.LayoutParams(18.dp, 18.dp).apply {
+                marginStart = 12.dp; marginEnd = 6.dp
+            }
         }
-        val tvTitle = TextView(ctx).apply {
+        val tvTitle = android.widget.TextView(ctx).apply {
             text = "DevTools Pro"
             setTextColor(Color.WHITE)
-            textSize = 14f
+            textSize = 13f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             layoutParams = LinearLayout.LayoutParams(WRAP, WRAP)
         }
-        val tvV5 = TextView(ctx).apply {
+        val tvV5 = android.widget.TextView(ctx).apply {
             text = "v5"
             setTextColor(Color.parseColor("#10B981"))
-            textSize = 10f
+            textSize = 9f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             setPadding(4.dp, 0, 4.dp, 0)
             background = android.graphics.drawable.GradientDrawable().apply {
@@ -119,7 +112,9 @@ class DevToolsSheet(
                 setColor(Color.parseColor("#1A2A1A"))
                 cornerRadius = 4f
             }
-            layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = 6.dp; topMargin = 2.dp }
+            layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply {
+                marginStart = 4.dp; topMargin = 1.dp
+            }
         }
         val spacer = View(ctx).apply {
             layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
@@ -129,22 +124,23 @@ class DevToolsSheet(
                 shape = android.graphics.drawable.GradientDrawable.OVAL
                 setColor(Color.parseColor("#10B981"))
             }
-            layoutParams = LinearLayout.LayoutParams(8.dp, 8.dp).apply { marginEnd = 4.dp }
+            layoutParams = LinearLayout.LayoutParams(7.dp, 7.dp).apply { marginEnd = 4.dp }
         }
-        val tvLive = TextView(ctx).apply {
+        val tvLive = android.widget.TextView(ctx).apply {
             text = "LIVE"
             setTextColor(Color.parseColor("#10B981"))
-            textSize = 11f
+            textSize = 10f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             layoutParams = LinearLayout.LayoutParams(WRAP, WRAP)
         }
-        header.addView(ivBolt)
-        header.addView(tvTitle)
-        header.addView(tvV5)
-        header.addView(spacer)
-        header.addView(liveDot)
-        header.addView(tvLive)
-        outer.addView(header)
+        topBar.addView(btnHide)
+        topBar.addView(ivBolt)
+        topBar.addView(tvTitle)
+        topBar.addView(tvV5)
+        topBar.addView(spacer)
+        topBar.addView(liveDot)
+        topBar.addView(tvLive)
+        outer.addView(topBar)
 
         outer.addView(View(ctx).apply {
             setBackgroundColor(Color.parseColor("#333333"))
@@ -152,9 +148,11 @@ class DevToolsSheet(
         })
 
         // ── Tab row ───────────────────────────────────────────────────────
-        val tabRow = row(ctx, "#1E1E1E").apply {
-            layoutParams = LinearLayout.LayoutParams(MATCH, 44.dp)
-            setPadding(0, 0, 4.dp, 0)
+        val tabRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.parseColor("#1E1E1E"))
+            layoutParams = LinearLayout.LayoutParams(MATCH, 40.dp)
         }
         tabLayout = TabLayout(ctx).apply {
             setBackgroundColor(Color.parseColor("#1E1E1E"))
@@ -195,48 +193,11 @@ class DevToolsSheet(
         return outer
     }
 
-    private fun refreshTabs() {
-        val titles = tabOrder.map { it.title() }
-        if (tabLayout.tabCount == 0) {
-            titles.forEach { tabLayout.addTab(tabLayout.newTab().setText(it)) }
-        } else {
-            titles.forEachIndexed { i, t -> tabLayout.getTabAt(i)?.text = t }
-        }
-    }
-
-    private fun showTab(pos: Int) {
-        val id = tabOrder.getOrNull(pos) ?: return
-        when (id) {
-            TabId.Network  -> showNetworkTab()
-            TabId.Streams  -> showStreamsTab()
-            TabId.Console  -> showConsoleTab()
-            TabId.Headers  -> showHeadersTab()
-            TabId.Crypto   -> showCryptoTab()
-            TabId.WS       -> showWsTab()
-            TabId.Deep     -> showDeepTab()
-            TabId.HTML     -> showHtmlTab()
-            TabId.M3U8     -> showM3u8Tab()
-            TabId.Blocker  -> showBlockerTab()
-            TabId.UA       -> showUaTab()
-            TabId.Saved    -> showSavedTab()
-            TabId.Cookie   -> showCookieTab()
-            TabId.Plugin   -> showPluginTab()
-            TabId.Storage  -> showStorageTab()
-            TabId.CSS      -> showCssTab()
-            TabId.Timeline -> showTimelineTab()
-            TabId.SW       -> showSwIdbTab()
-            TabId.DOM      -> showDomTab()
-            TabId.Proxy    -> showProxyTab()
-            TabId.History  -> showHistoryTab()
-        }
-    }
-
     // Tab ids (stable across reorders). Primary design tabs come first.
     private enum class TabId(val title: () -> String) {
         Network ({ "Network" }),
         Streams ({ "Streams" }),
         Console ({ "Console" }),
-        Headers ({ "Headers" }),
         Crypto  ({ "Crypto" }),
         WS      ({ "WS" }),
         Deep    ({ "Deep" }),
@@ -257,144 +218,39 @@ class DevToolsSheet(
     }
     private val tabOrder: List<TabId> = TabId.values().toList()
 
-    // ── 0. Headers (HTTP + JWT decoder) ────────────────────────────────────────
-    private fun showHeadersTab() {
-        val ctx = requireContext()
-        val container = col(ctx, "#121212")
-        val sv = android.widget.ScrollView(ctx).apply {
-            layoutParams = FrameLayout.LayoutParams(MATCH, MATCH)
-        }
-        val inner = col(ctx).apply { setPadding(12.dp, 10.dp, 12.dp, 16.dp) }
-        sv.addView(inner)
-        container.addView(sv)
-
-        val req = detector.requests.lastOrNull { it.url.startsWith("http") && it.method.equals("GET", true) }
-        val respHeaders = req?.responseHeaders ?: emptyMap()
-        val reqHeaders  = req?.headers          ?: emptyMap()
-
-        inner.addView(sectionHeader(ctx, "REQUEST HEADERS"))
-        if (reqHeaders.isEmpty()) {
-            inner.addView(tv(ctx, "No request headers captured yet.", "#757575", 11f).apply {
-                setPadding(0, 4.dp, 0, 12.dp)
-            })
+    private fun refreshTabs() {
+        val titles = tabOrder.map { it.title() }
+        if (tabLayout.tabCount == 0) {
+            titles.forEach { tabLayout.addTab(tabLayout.newTab().setText(it)) }
         } else {
-            reqHeaders.forEach { (k, v) -> inner.addView(headerRow(ctx, k, v, isResponse = false)) }
-            inner.addView(sectionDivider(ctx))
+            titles.forEachIndexed { i, t -> tabLayout.getTabAt(i)?.text = t }
         }
-
-        inner.addView(sectionHeader(ctx, "RESPONSE HEADERS"))
-        if (respHeaders.isEmpty()) {
-            inner.addView(tv(ctx, "No response headers captured yet.", "#757575", 11f).apply {
-                setPadding(0, 4.dp, 0, 12.dp)
-            })
-        } else {
-            respHeaders.forEach { (k, v) -> inner.addView(headerRow(ctx, k, v, isResponse = true)) }
-            inner.addView(sectionDivider(ctx))
-        }
-
-        inner.addView(sectionHeader(ctx, "JWT Decoder"))
-        val jwtCard = col(ctx, "#2A2A2A").apply {
-            setPadding(12.dp, 10.dp, 12.dp, 12.dp)
-            background = android.graphics.drawable.GradientDrawable().apply {
-                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-                setColor(Color.parseColor("#2A2A2A"))
-                cornerRadius = 8.dp.toFloat()
-                setStroke(1.dp, Color.parseColor("#333333"))
-            }
-            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = 6.dp }
-        }
-        val jwtInput = EditText(ctx).apply {
-            hint = "Paste JWT token..."
-            setHintTextColor(Color.parseColor("#555555"))
-            setTextColor(Color.parseColor("#FFFFFF"))
-            textSize = 11f
-            typeface = android.graphics.Typeface.MONOSPACE
-            background = android.graphics.drawable.GradientDrawable().apply {
-                shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-                setColor(Color.parseColor("#1E1E1E"))
-                cornerRadius = 6.dp.toFloat()
-                setStroke(1.dp, Color.parseColor("#333333"))
-            }
-            setPadding(8.dp, 6.dp, 8.dp, 6.dp)
-            minLines = 2
-            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
-        }
-        val jwtOut = TextView(ctx).apply {
-            text = "Decoded payload will appear here."
-            setTextColor(Color.parseColor("#B0B0B0"))
-            textSize = 10f
-            typeface = android.graphics.Typeface.MONOSPACE
-            setTextIsSelectable(true)
-            setPadding(0, 8.dp, 0, 4.dp)
-            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
-        }
-        val btnDecode = btn(ctx, "Decode", "#1A2A1A", "#10B981").apply {
-            setOnClickListener {
-                val token = jwtInput.text.toString().trim()
-                if (token.isBlank()) {
-                    jwtOut.text = "Please paste a JWT first."
-                    jwtOut.setTextColor(Color.parseColor("#FF9800"))
-                    return@setOnClickListener
-                }
-                runCatching {
-                    val info = JwtDecoder.decode(token)
-                    if (info == null) {
-                        jwtOut.text = "Invalid JWT (could not decode)."
-                        jwtOut.setTextColor(Color.parseColor("#EF4444"))
-                    } else {
-                        val sb = StringBuilder()
-                        sb.append("subject:  ").append(info.subject.ifBlank { "(none)" }).append("\n")
-                        sb.append("issuer:   ").append(info.issuer.ifBlank { "(none)" }).append("\n")
-                        sb.append("expired:  ").append(if (info.isExpired) "yes" else "no").append("\n")
-                        sb.append("exp time: ").append(info.expTime).append("\n\n")
-                        sb.append("--- header ---\n").append(info.header).append("\n\n")
-                        sb.append("--- payload ---\n").append(info.payload)
-                        jwtOut.text = sb.toString()
-                        jwtOut.setTextColor(Color.parseColor("#10B981"))
-                    }
-                }.onFailure {
-                    jwtOut.text = "Error: ${it.message}"
-                    jwtOut.setTextColor(Color.parseColor("#EF4444"))
-                }
-            }
-        }
-        jwtCard.addView(jwtInput)
-        jwtCard.addView(jwtOut)
-        jwtCard.addView(btnDecode)
-        inner.addView(jwtCard)
-
-        contentFrame.addView(container)
     }
 
-    private fun headerRow(ctx: Context, key: String, value: String, isResponse: Boolean): LinearLayout {
-        val row = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 5.dp, 0, 5.dp)
-            layoutParams = LinearLayout.LayoutParams(MATCH, WRAP)
+    private fun showTab(pos: Int) {
+        val id = tabOrder.getOrNull(pos) ?: return
+        when (id) {
+            TabId.Network  -> showNetworkTab()
+            TabId.Streams  -> showStreamsTab()
+            TabId.Console  -> showConsoleTab()
+            TabId.Crypto   -> showCryptoTab()
+            TabId.WS       -> showWsTab()
+            TabId.Deep     -> showDeepTab()
+            TabId.HTML     -> showHtmlTab()
+            TabId.M3U8     -> showM3u8Tab()
+            TabId.Blocker  -> showBlockerTab()
+            TabId.UA       -> showUaTab()
+            TabId.Saved    -> showSavedTab()
+            TabId.Cookie   -> showCookieTab()
+            TabId.Plugin   -> showPluginTab()
+            TabId.Storage  -> showStorageTab()
+            TabId.CSS      -> showCssTab()
+            TabId.Timeline -> showTimelineTab()
+            TabId.SW       -> showSwIdbTab()
+            TabId.DOM      -> showDomTab()
+            TabId.Proxy    -> showProxyTab()
+            TabId.History  -> showHistoryTab()
         }
-        val kColor = if (isResponse) "#10B981" else "#00CED1"
-        val tvKey = TextView(ctx).apply {
-            text = key
-            setTextColor(Color.parseColor(kColor))
-            textSize = 11f
-            typeface = android.graphics.Typeface.MONOSPACE
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            layoutParams = LinearLayout.LayoutParams(0, WRAP, 0.35f)
-        }
-        val tvVal = TextView(ctx).apply {
-            text = value
-            setTextColor(Color.parseColor("#E0E0E0"))
-            textSize = 11f
-            typeface = android.graphics.Typeface.MONOSPACE
-            maxLines = 2
-            ellipsize = android.text.TextUtils.TruncateAt.END
-            setTextIsSelectable(true)
-            layoutParams = LinearLayout.LayoutParams(0, WRAP, 0.65f).apply { marginStart = 8.dp }
-        }
-        row.addView(tvKey); row.addView(tvVal)
-        return row
     }
 
     // ── 1. Network ────────────────────────────────────────────────────────────
@@ -430,7 +286,7 @@ class DevToolsSheet(
         val rv = RecyclerView(ctx).apply { layoutManager=LinearLayoutManager(ctx); layoutParams=FrameLayout.LayoutParams(MATCH,MATCH) }
         rv.adapter = StreamAdapter(
             onCopy  = { copy(it.url) },
-            onPlay  = { onPlayStream(it); dismiss() },
+            onPlay  = { onPlayStream(it); close() },
             onShare = { share(it.url) }
         ).also { it.submitList(streams) }
         contentFrame.addView(rv)
@@ -634,7 +490,7 @@ class DevToolsSheet(
         }
 
         btnPicker.setOnClickListener {
-            dismiss()
+            close()
             activity?.activatePicker()
         }
 
@@ -737,7 +593,7 @@ class DevToolsSheet(
                         layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = 8.dp }
                         setOnClickListener {
                             val stream = StreamItem.fromUrl(q.url, referer, "m3u8_parser")
-                            if (stream != null) { onPlayStream(stream); dismiss() }
+                            if (stream != null) { onPlayStream(stream); close() }
                         }
                     })
                     card.addView(btnRow)
@@ -926,7 +782,7 @@ class DevToolsSheet(
                 val e = all[pos]
                 vh.tvTitle.text = (if (e.isBookmark) "★ " else "  ") + e.title
                 vh.tvUrl.text   = e.url
-                vh.root.setOnClickListener { act.navigateTo(e.url); dismiss() }
+                vh.root.setOnClickListener { act.navigateTo(e.url); close() }
                 vh.btnDel.setOnClickListener {
                     if (e.isBookmark) BookmarkManager.removeBookmark(ctx, e.url)
                     else BookmarkManager.clearHistory(ctx)
@@ -1572,103 +1428,28 @@ class DevToolsSheet(
             addView(inner)
         }
         val msgs = detector.wsMessages
-        val wsUrl = msgs.firstOrNull()?.wsUrl ?: ""
-
-        // ── WebSocket URL bar + CONNECTED badge ──────────────────────
-        if (wsUrl.isNotBlank()) {
-            val urlRow = row(ctx, "#1E1E1E").apply {
-                layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 8.dp }
-                setPadding(10.dp, 8.dp, 10.dp, 8.dp)
-                background = android.graphics.drawable.GradientDrawable().apply {
-                    shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-                    setColor(Color.parseColor("#1E1E1E"))
-                    cornerRadius = 8.dp.toFloat()
-                    setStroke(1.dp, Color.parseColor("#333333"))
-                }
-            }
-            val tvUrl = TextView(ctx).apply {
-                text = wsUrl.take(80)
-                setTextColor(Color.parseColor("#B0B0B0"))
-                textSize = 10f
-                typeface = android.graphics.Typeface.MONOSPACE
-                maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
-                layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
-            }
-            val tvConn = TextView(ctx).apply {
-                text = "CONNECTED"
-                setTextColor(Color.WHITE)
-                textSize = 9f
-                typeface = android.graphics.Typeface.DEFAULT_BOLD
-                setPadding(8.dp, 2.dp, 8.dp, 2.dp)
-                background = android.graphics.drawable.GradientDrawable().apply {
-                    shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-                    setColor(Color.parseColor("#10B981"))
-                    cornerRadius = 4f
-                }
-                layoutParams = LinearLayout.LayoutParams(WRAP, WRAP).apply { marginStart = 8.dp }
-            }
-            urlRow.addView(tvUrl)
-            urlRow.addView(tvConn)
-            inner.addView(urlRow)
-        }
-
-        inner.addView(sectionHeader(ctx, "Messages (${msgs.size})"))
+        inner.addView(sectionHeader(ctx, "WebSocket Messages (${msgs.size})"))
         if (msgs.isEmpty()) {
-            inner.addView(tv(ctx, "No WebSocket messages yet. Open a page using the WebSocket API.", "#757575", 12f)
+            inner.addView(tv(ctx, "Chưa có WS message. Mở trang dùng WebSocket API.", "#888", 12f)
                 .apply { setPadding(0, 8.dp, 0, 0) })
         } else {
             msgs.take(50).forEach { msg ->
-                val (badgeText, badgeColor, badgeFg) = when (msg.direction) {
-                    "open"  -> Triple("OPEN",  Color.parseColor("#10B981"), Color.WHITE)
-                    "send"  -> Triple("SENT",  Color.parseColor("#2196F3"), Color.WHITE)
-                    "recv"  -> Triple("RECV",  Color.parseColor("#FF9800"), Color.WHITE)
-                    else    -> Triple("EVENT", Color.parseColor("#6B7280"), Color.WHITE)
+                val bg = when(msg.direction) {
+                    "open"  -> "#1A2A1A"; "send" -> "#2A1A1A"; "recv" -> "#1A1A2A"; else -> "#1E1E1E"
                 }
-                val card = col(ctx, "#1E1E1E").apply {
-                    setPadding(10.dp, 8.dp, 10.dp, 8.dp)
-                    background = android.graphics.drawable.GradientDrawable().apply {
-                        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-                        setColor(Color.parseColor("#1E1E1E"))
-                        cornerRadius = 4.dp.toFloat()
-                        setStroke(1.dp, Color.parseColor("#333333"))
-                    }
-                    layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 6.dp }
+                val icon = when(msg.direction) { "open"->"🟢"; "send"->"↑"; "recv"->"↓"; else->"✖" }
+                val card = col(ctx, bg).apply {
+                    setPadding(8.dp, 6.dp, 8.dp, 6.dp)
+                    layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 4.dp }
                 }
-                // Header row: badge + URL + (right-aligned) copy
-                val top = row(ctx).apply { setPadding(0,0,0,4.dp) }
-                val tvBadge = TextView(ctx).apply {
-                    text = badgeText
-                    setTextColor(badgeFg)
-                    textSize = 9f
-                    typeface = android.graphics.Typeface.DEFAULT_BOLD
-                    setPadding(6.dp, 1.dp, 6.dp, 1.dp)
-                    background = android.graphics.drawable.GradientDrawable().apply {
-                        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-                        setColor(badgeColor)
-                        cornerRadius = 3f
-                    }
-                }
-                val tvUrl = TextView(ctx).apply {
-                    text = "  ${msg.wsUrl.take(60)}"
-                    setTextColor(Color.parseColor("#B0B0B0"))
-                    textSize = 10f
-                    typeface = android.graphics.Typeface.MONOSPACE
-                    maxLines = 1
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                    layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
-                }
-                top.addView(tvBadge)
-                top.addView(tvUrl)
-                card.addView(top)
+                card.addView(tv(ctx, "$icon ${msg.wsUrl.take(60)}", "#FFFFFF", 10f).apply {
+                    typeface = android.graphics.Typeface.MONOSPACE })
                 if (msg.data.isNotBlank()) {
-                    card.addView(tv(ctx, msg.data.take(300), "#B0B0B0", 10f).apply {
+                    card.addView(tv(ctx, msg.data.take(200), "#B0B0B0", 10f).apply {
                         typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
                     })
                 }
-                card.addView(btn(ctx, "Copy", "#2A2A2A", "#9CA3AF").apply {
-                    setOnClickListener { copy(msg.data) }
-                })
+                card.addView(btn(ctx, "Copy", bg).apply { setOnClickListener { copy(msg.data) } })
                 inner.addView(card)
             }
         }
@@ -2012,7 +1793,7 @@ class DevToolsSheet(
             "🌑 Dark override" to """* { background: #111 !important; color: #eee !important; } a { color: #64b5f6 !important; }""",
             "🙈 Hide ads"       to """.ad,.ads,.advertisement,[id*=ad],[class*=ad],iframe[src*=ad] { display:none!important; }""",
             "👁 Show hidden"    to """[style*="display:none"],[hidden] { display:block!important; visibility:visible!important; }""",
-            "🔍 Highlight video" to """video { outline: 3px solid #10B981 !important; }""",
+            "🔍 Highlight video" to """video { outline: 3px solid #1D9E75 !important; }""",
             "📐 Desktop layout"  to """body { min-width: 1280px !important; zoom: 0.7; }"""
         )
         presets.forEach { (label, css) ->
@@ -2128,7 +1909,7 @@ class DevToolsSheet(
 
     companion object { const val TAG = "DevToolsSheet" }
 
-    // ── NetworkAdapter (nested static class) ───────────────────────────────────
+    // ── NetworkAdapter (nested class) ─────────────────────────────────────────
     class NetworkAdapter(
         private val allItems: List<NetworkRequest>,
         private val onClick: (NetworkRequest) -> Unit
@@ -2572,7 +2353,7 @@ class DevToolsSheet(
                     (function(){
                         var el = document.querySelectorAll("${el.optString("tag")}")[${idx}];
                         if (!el) return;
-                        el.style.outline='4px solid #10B981';
+                        el.style.outline='4px solid #1D9E75';
                         el.scrollIntoView({behavior:'smooth', block:'center'});
                         setTimeout(function(){ el.style.outline=''; }, 3000);
                     })()

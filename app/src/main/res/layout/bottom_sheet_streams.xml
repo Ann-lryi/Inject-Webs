@@ -1,12 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:background="@color/surface">
 
-    <!-- Drag handle -->
     <View
         android:layout_width="40dp"
         android:layout_height="4dp"
@@ -16,105 +14,23 @@
         android:background="@drawable/bg_filter_pill"
         android:backgroundTint="@color/text_tertiary"/>
 
-    <!-- ═══ Header: "X Streams Detected" + Export All ═════════════════════ -->
-    <LinearLayout
+    <TextView
+        android:id="@+id/tvCount"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
         android:paddingHorizontal="16dp"
-        android:paddingBottom="10dp">
-
-        <TextView
-            android:id="@+id/tvCount"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="0 Streams Detected"
-            android:textSize="17sp"
-            android:textStyle="bold"
-            android:textColor="@color/text_primary"
-            android:fontFamily="sans-serif-medium"/>
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnExportAll"
-            style="@style/Widget.Material3.Button.UnelevatedButton"
-            android:layout_width="wrap_content"
-            android:layout_height="32dp"
-            android:minWidth="0dp"
-            android:paddingHorizontal="14dp"
-            android:text="Export All"
-            android:textSize="11sp"
-            android:textColor="@color/white"
-            android:textAllCaps="false"
-            app:backgroundTint="@color/accent_green"
-            app:cornerRadius="16dp"
-            app:icon="@drawable/ic_share"
-            app:iconTint="@color/white"
-            app:iconSize="14dp"/>
-
-    </LinearLayout>
-
-    <!-- ═══ Filter pills row ══════════════════════════════════════════════ -->
-    <LinearLayout
-        android:id="@+id/filterRow"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingHorizontal="16dp"
-        android:paddingBottom="10dp">
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnByQuality"
-            style="@style/Widget.Material3.Button.OutlinedButton"
-            android:layout_width="wrap_content"
-            android:layout_height="30dp"
-            android:minWidth="0dp"
-            android:paddingHorizontal="14dp"
-            android:text="By Quality"
-            android:textSize="11sp"
-            android:textAllCaps="false"
-            android:textColor="@color/accent_green"
-            app:cornerRadius="16dp"
-            app:strokeColor="@color/accent_green"
-            app:strokeWidth="1dp"/>
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnByType"
-            style="@style/Widget.Material3.Button.TextButton"
-            android:layout_width="wrap_content"
-            android:layout_height="30dp"
-            android:minWidth="0dp"
-            android:paddingHorizontal="14dp"
-            android:layout_marginStart="6dp"
-            android:text="By Type"
-            android:textSize="11sp"
-            android:textAllCaps="false"
-            android:textColor="@color/text_secondary"
-            app:cornerRadius="16dp"/>
-
-        <View
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            android:layout_weight="1"/>
-
-        <TextView
-            android:id="@+id/tvFilterHint"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Sorted by quality"
-            android:textSize="10sp"
-            android:textColor="@color/text_tertiary"/>
-
-    </LinearLayout>
+        android:paddingBottom="12dp"
+        android:text="0 Streams Detected"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_primary"
+        android:fontFamily="sans-serif-medium"/>
 
     <View
         android:layout_width="match_parent"
         android:layout_height="0.5dp"
         android:background="@color/divider"/>
 
-    <!-- ═══ Stream list ═══════════════════════════════════════════════════ -->
     <androidx.core.widget.NestedScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -125,7 +41,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:nestedScrollingEnabled="false"
-            android:paddingTop="4dp"
             android:paddingBottom="16dp"/>
 
     </androidx.core.widget.NestedScrollView>

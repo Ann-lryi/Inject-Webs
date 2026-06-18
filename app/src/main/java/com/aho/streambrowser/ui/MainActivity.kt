@@ -108,7 +108,7 @@ class MainActivity : AppCompatActivity() {
         // Auto-save streams to history via ViewModel
         detector.onStreamFound = { stream ->
             vm.saveStream(stream)
-            runOnUiThread { updateFab() }
+            runOnUiThread { updateFab(); updateStreamBadge() }
         }
         detector.onRequestAdded = { runOnUiThread { updateFab() } }
     }
@@ -221,6 +221,7 @@ class MainActivity : AppCompatActivity() {
         b.btnDevTools.setOnClickListener     { openDevTools() }
         b.btnDevTools.setOnLongClickListener { showQuickActions(); true }
         b.btnPickerFloat.setOnClickListener  { b.btnPickerFloat.isVisible = !b.btnPickerFloat.isVisible }
+        b.btnHide.setOnClickListener         { closeDevTools() }
     }
 
     private fun setupDetector() {
@@ -245,13 +246,13 @@ class MainActivity : AppCompatActivity() {
             val label = TextView(this).apply {
                 text     = tab.title.take(14).ifBlank { tab.url.take(16).removePrefix("https://").removePrefix("http://") }
                 textSize = 10f
-                setTextColor(if (isCurrent) Color.WHITE else Color.parseColor("#B0B0B0"))
+                setTextColor(if (isCurrent) Color.WHITE else Color.parseColor("#AAAAAA"))
                 maxLines = 1
             }
             val close = android.widget.ImageButton(this).apply {
                 setImageResource(R.drawable.ic_close); background = null
                 layoutParams = LinearLayout.LayoutParams((20*dp).toInt(), (20*dp).toInt())
-                setColorFilter(if (isCurrent) Color.WHITE else Color.parseColor("#9CA3AF"))
+                setColorFilter(if (isCurrent) Color.WHITE else Color.parseColor("#888888"))
                 setOnClickListener { closeTab(idx) }
             }
             chip.addView(label); chip.addView(close); strip.addView(chip)
@@ -345,9 +346,6 @@ class MainActivity : AppCompatActivity() {
         when { s>0 -> { b.btnDevTools.text="$s Streams"; b.btnDevTools.extend() }
                r>0 -> { b.btnDevTools.text="DevTools ($r)"; b.btnDevTools.shrink() }
                else -> { b.btnDevTools.text="DevTools"; b.btnDevTools.shrink() } }
-        b.btnDevTools.iconTint = android.content.res.ColorStateList.valueOf(
-            if (s > 0) Color.parseColor("#34D399") else Color.WHITE
-        )
     }
 
     // ── Extras ────────────────────────────────────────────────────────────────
@@ -415,8 +413,63 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openDevTools() {
-        DevToolsSheet(detector, b.webView, this) { playStream(it) }
-            .show(supportFragmentManager, DevToolsSheet.TAG)
+        if (b.devToolsContainer.visibility == android.view.View.VISIBLE) return
+
+        // Add DevTools fragment to right panel
+        val sheet = DevToolsSheet(detector, b.webView, this) { playStream(it) }
+        supportFragmentManager.beginTransaction()
+            .replace(R.id.devToolsContainer, sheet, DevToolsSheet.TAG)
+            .commit()
+
+        // Shrink WebView to 40%
+        val lp = b.webFrame.layoutParams as android.widget.LinearLayout.LayoutParams
+        lp.weight = 2f
+        b.webFrame.layoutParams = lp
+        val lp2 = b.devToolsContainer.layoutParams as android.widget.LinearLayout.LayoutParams
+        lp2.weight = 3f
+        b.devToolsContainer.layoutParams = lp2
+        b.devToolsContainer.visibility = android.view.View.VISIBLE
+
+        // Show Hide button + Streams badge
+        b.btnHide.visibility = android.view.View.VISIBLE
+        updateStreamBadge()
+
+        // Hide FAB
+        b.btnDevTools.hide()
+    }
+
+    private fun closeDevTools() {
+        // Remove DevTools fragment
+        val sheet = supportFragmentManager.findFragmentByTag(DevToolsSheet.TAG) as? DevToolsSheet
+        if (sheet != null) {
+            supportFragmentManager.beginTransaction().remove(sheet).commit()
+        }
+
+        // Restore WebView to full width
+        val lp = b.webFrame.layoutParams as android.widget.LinearLayout.LayoutParams
+        lp.weight = 1f
+        b.webFrame.layoutParams = lp
+        val lp2 = b.devToolsContainer.layoutParams as android.widget.LinearLayout.LayoutParams
+        lp2.weight = 0f
+        b.devToolsContainer.layoutParams = lp2
+        b.devToolsContainer.visibility = android.view.View.GONE
+
+        // Hide overlays
+        b.btnHide.visibility = android.view.View.GONE
+        b.tvStreamBadge.visibility = android.view.View.GONE
+
+        // Show FAB
+        b.btnDevTools.show()
+    }
+
+    private fun updateStreamBadge() {
+        val count = detector.streamCount()
+        if (count > 0) {
+            b.tvStreamBadge.text = "$count Streams"
+            b.tvStreamBadge.visibility = android.view.View.VISIBLE
+        } else {
+            b.tvStreamBadge.visibility = android.view.View.GONE
+        }
     }
 
     private fun playStream(item: StreamItem) {
