@@ -35,9 +35,8 @@
         <activity
             android:name=".ui.PlayerActivity"
             android:supportsPictureInPicture="true"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboardHidden"
             android:exported="false"
-            android:configChanges="orientation|screenSize"
             android:screenOrientation="landscape" />
 
     </application>
