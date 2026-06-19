@@ -4,227 +4,148 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/bg_browser">
+    android:background="#0A0A0A">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:orientation="horizontal">
+        android:orientation="vertical">
 
-        <!-- ═══ Left panel: browser content (40% when DevTools open, 100% otherwise) ═══ -->
-        <FrameLayout
-            android:id="@+id/webFrame"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1">
+        <!-- Toolbar (insets applied in code) -->
+        <LinearLayout
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="52dp"
+            android:orientation="vertical"
+            android:background="#141414"
+            android:elevation="6dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:orientation="vertical">
+                android:layout_height="52dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="4dp">
 
-                <!-- Toolbar (browser chrome) -->
+                <ImageButton android:id="@+id/btnBack"
+                    android:layout_width="38dp" android:layout_height="38dp"
+                    android:src="@drawable/ic_arrow_back"
+                    android:background="@drawable/bg_icon_btn"
+                    android:enabled="false" android:alpha="0.3"
+                    android:scaleType="center" android:contentDescription="Back"/>
+
+                <ImageButton android:id="@+id/btnForward"
+                    android:layout_width="38dp" android:layout_height="38dp"
+                    android:src="@drawable/ic_arrow_forward"
+                    android:background="@drawable/bg_icon_btn"
+                    android:enabled="false" android:alpha="0.3"
+                    android:scaleType="center" android:contentDescription="Forward"
+                    android:layout_marginStart="2dp"/>
+
                 <LinearLayout
-                    android:id="@+id/toolbar"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:minHeight="52dp"
-                    android:orientation="vertical"
-                    android:background="@drawable/bg_toolbar"
-                    android:elevation="4dp">
+                    android:layout_width="0dp" android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:layout_marginHorizontal="4dp"
+                    android:background="@drawable/bg_url_bar_v2"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:paddingStart="8dp" android:paddingEnd="2dp">
 
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="48dp"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:paddingHorizontal="6dp">
+                    <ImageView android:id="@+id/ivSecure"
+                        android:layout_width="13dp" android:layout_height="13dp"
+                        android:src="@drawable/ic_lock" android:alpha="0.5"
+                        android:layout_marginEnd="4dp"/>
 
-                        <ImageButton android:id="@+id/btnBack"
-                            android:layout_width="34dp" android:layout_height="34dp"
-                            android:src="@drawable/ic_arrow_back"
-                            android:background="@drawable/bg_icon_btn"
-                            android:enabled="false" android:alpha="0.3"
-                            android:scaleType="center" android:contentDescription="Back"
-                            app:tint="@color/text_primary"/>
+                    <EditText android:id="@+id/etUrl"
+                        android:layout_width="0dp" android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:background="@null" android:inputType="textUri"
+                        android:imeOptions="actionGo|flagNoExtractUi"
+                        android:singleLine="true" android:textSize="11.5sp"
+                        android:textColor="#E0E0E0" android:hint="Tìm kiếm hoặc nhập URL"
+                        android:textColorHint="#555" android:selectAllOnFocus="true"/>
 
-                        <ImageButton android:id="@+id/btnForward"
-                            android:layout_width="34dp" android:layout_height="34dp"
-                            android:src="@drawable/ic_arrow_forward"
-                            android:background="@drawable/bg_icon_btn"
-                            android:enabled="false" android:alpha="0.3"
-                            android:scaleType="center" android:contentDescription="Forward"
-                            android:layout_marginStart="2dp"
-                            app:tint="@color/text_primary"/>
-
-                        <LinearLayout
-                            android:layout_width="0dp" android:layout_height="34dp"
-                            android:layout_weight="1"
-                            android:layout_marginHorizontal="6dp"
-                            android:background="@drawable/bg_url_bar_v2"
-                            android:orientation="horizontal"
-                            android:gravity="center_vertical"
-                            android:paddingStart="10dp" android:paddingEnd="4dp">
-
-                            <ImageView android:id="@+id/ivSecure"
-                                android:layout_width="12dp" android:layout_height="12dp"
-                                android:src="@drawable/ic_lock"
-                                android:layout_marginEnd="6dp"/>
-
-                            <EditText android:id="@+id/etUrl"
-                                android:layout_width="0dp" android:layout_height="match_parent"
-                                android:layout_weight="1"
-                                android:background="@null" android:inputType="textUri"
-                                android:imeOptions="actionGo|flagNoExtractUi"
-                                android:singleLine="true" android:textSize="11sp"
-                                android:textColor="@color/text_primary"
-                                android:textColorHint="@color/text_tertiary"
-                                android:hint="Search or enter URL"
-                                android:selectAllOnFocus="true"/>
-
-                            <ImageButton android:id="@+id/btnRefresh"
-                                android:layout_width="28dp" android:layout_height="28dp"
-                                android:src="@drawable/ic_refresh"
-                                android:background="@null"
-                                android:scaleType="center" android:contentDescription="Reload"
-                                app:tint="@color/text_secondary"/>
-                        </LinearLayout>
-
-                        <ImageButton android:id="@+id/btnDesktop"
-                            android:layout_width="34dp" android:layout_height="34dp"
-                            android:src="@drawable/ic_home"
-                            android:background="@drawable/bg_icon_btn"
-                            android:alpha="0.6"
-                            android:scaleType="center" android:contentDescription="Home"
-                            app:tint="@color/text_primary"/>
-
-                        <ImageButton android:id="@+id/btnBookmark"
-                            android:layout_width="34dp" android:layout_height="34dp"
-                            android:src="@drawable/ic_bookmark"
-                            android:background="@drawable/bg_icon_btn"
-                            android:scaleType="center" android:contentDescription="Bookmark"
-                            app:tint="@color/text_primary"/>
-
-                    </LinearLayout>
+                    <ImageButton android:id="@+id/btnRefresh"
+                        android:layout_width="30dp" android:layout_height="30dp"
+                        android:src="@drawable/ic_refresh"
+                        android:background="@null" android:alpha="0.7"
+                        android:scaleType="center" android:contentDescription="Reload"/>
                 </LinearLayout>
 
-                <!-- Tab strip -->
-                <HorizontalScrollView
-                    android:id="@+id/tabScrollView"
-                    android:layout_width="match_parent"
-                    android:layout_height="30dp"
-                    android:background="@color/bg_browser"
-                    android:scrollbars="none"
-                    android:overScrollMode="never"
-                    android:visibility="gone">
+                <ImageButton android:id="@+id/btnDesktop"
+                    android:layout_width="38dp" android:layout_height="38dp"
+                    android:src="@drawable/ic_home"
+                    android:background="@drawable/bg_icon_btn"
+                    android:alpha="0.5"
+                    android:scaleType="center" android:contentDescription="Desktop"/>
 
-                    <LinearLayout
-                        android:id="@+id/tabStrip"
-                        android:layout_width="wrap_content"
-                        android:layout_height="match_parent"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:paddingHorizontal="6dp"/>
-
-                </HorizontalScrollView>
-
-                <!-- Progress bar -->
-                <ProgressBar android:id="@+id/progressBar"
-                    style="@style/Widget.AppCompat.ProgressBar.Horizontal"
-                    android:layout_width="match_parent" android:layout_height="2dp"
-                    android:max="100"
-                    android:progressTint="@color/accent_green"
-                    android:progressBackgroundTint="@color/surface"
-                    android:visibility="gone"/>
-
-                <!-- SwipeRefresh + WebView -->
-                <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
-                    android:id="@+id/swipeRefresh"
-                    android:layout_width="match_parent"
-                    android:layout_height="0dp"
-                    android:layout_weight="1">
-
-                    <WebView android:id="@+id/webView"
-                        android:layout_width="match_parent"
-                        android:layout_height="match_parent"
-                        android:overScrollMode="never"/>
-
-                </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+                <ImageButton android:id="@+id/btnBookmark"
+                    android:layout_width="38dp" android:layout_height="38dp"
+                    android:src="@drawable/ic_bookmark"
+                    android:background="@drawable/bg_icon_btn"
+                    android:scaleType="center" android:contentDescription="Bookmark"/>
 
             </LinearLayout>
+        </LinearLayout>
 
-            <!-- ═══ Hide button (top-left, shown when DevTools open) ═══ -->
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnHide"
-                style="@style/Widget.Material3.Button.UnelevatedButton"
+        <!-- F2: Tab strip -->
+        <HorizontalScrollView
+            android:id="@+id/tabScrollView"
+            android:layout_width="match_parent"
+            android:layout_height="32dp"
+            android:background="#0F0F0F"
+            android:scrollbars="none"
+            android:overScrollMode="never"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/tabStrip"
                 android:layout_width="wrap_content"
-                android:layout_height="32dp"
-                android:minWidth="0dp"
-                android:paddingHorizontal="14dp"
-                android:layout_marginTop="6dp"
-                android:layout_marginStart="6dp"
-                android:text="Hide"
-                android:textSize="11sp"
-                android:textAllCaps="false"
-                android:textColor="@color/white"
-                android:fontFamily="sans-serif-medium"
-                app:backgroundTint="@color/accent_green"
-                app:cornerRadius="16dp"
-                app:icon="@drawable/ic_eye_off"
-                app:iconTint="@color/white"
-                app:iconSize="13dp"
-                android:visibility="gone"/>
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="4dp"/>
 
-            <!-- ═══ Streams count badge (bottom-left) ═══ -->
-            <TextView
-                android:id="@+id/tvStreamBadge"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="bottom|start"
-                android:layout_marginBottom="6dp"
-                android:layout_marginStart="6dp"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="4dp"
-                android:text="0 Streams"
-                android:textSize="11sp"
-                android:textStyle="bold"
-                android:textColor="@color/white"
-                android:fontFamily="sans-serif-medium"
-                android:background="@drawable/bg_streams_badge"
-                android:visibility="gone"/>
+        </HorizontalScrollView>
 
-        </FrameLayout>
+        <!-- Progress -->
+        <ProgressBar android:id="@+id/progressBar"
+            style="@style/Widget.AppCompat.ProgressBar.Horizontal"
+            android:layout_width="match_parent" android:layout_height="2dp"
+            android:max="100" android:progressTint="#1D9E75"
+            android:progressBackgroundTint="#1A1A1A" android:visibility="gone"/>
 
-        <!-- ═══ Right panel: DevTools container (60% when DevTools open, gone otherwise) ═══ -->
-        <FrameLayout
-            android:id="@+id/devToolsContainer"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="0"
-            android:visibility="gone"/>
+        <!-- SwipeRefresh + WebView -->
+        <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+            android:id="@+id/swipeRefresh"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <WebView android:id="@+id/webView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:overScrollMode="never"/>
+
+        </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
     </LinearLayout>
 
-    <!-- ═══ DevTools FAB ═══ -->
     <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
         android:id="@+id/btnDevTools"
         android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:layout_gravity="bottom|end" android:layout_margin="16dp"
-        android:text="DevTools" android:textSize="12sp"
-        android:textColor="@color/white"
-        android:fontFamily="sans-serif-medium"
-        app:icon="@drawable/ic_devtools" app:iconTint="@color/white"
-        app:backgroundTint="@color/accent_green"
-        app:elevation="6dp"
-        app:strokeWidth="0dp"/>
+        android:text="DevTools" android:textSize="12sp" android:textColor="#FFF"
+        app:icon="@drawable/ic_devtools" app:iconTint="#FFF"
+        app:backgroundTint="#1D9E75" app:elevation="8dp"/>
 
-    <!-- ═══ Picker FAB ═══ -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/btnPickerFloat"
         android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:layout_gravity="bottom|start" android:layout_margin="16dp"
         android:src="@drawable/ic_picker" android:contentDescription="Picker"
-        app:backgroundTint="@color/picker_red" app:tint="@color/white"
-        app:elevation="6dp" android:visibility="gone"/>
+        app:backgroundTint="#E24B4A" app:tint="#FFF"
+        app:elevation="8dp" android:visibility="gone"/>
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

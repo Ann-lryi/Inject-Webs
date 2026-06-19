@@ -16,13 +16,17 @@ class BrowserWebViewClient(
     private val onPageFinished: (url: String) -> Unit
 ) : WebViewClient() {
 
-    /** J1: SSL certificate error bypass (dev/reverse-engineering use only)
-     *  NOTE: android.net.http.SslErrorHandler was removed from the public
-     *  SDK stubs in API 34+, so we can no longer override onReceivedSslError
-     *  with the original signature. The flag is kept for forward-compat but
-     *  has no effect on compileSdk 34+. To re-enable, downgrade compileSdk to 33. */
-    @Suppress("unused")
+    /** J1: SSL certificate error bypass (dev/reverse-engineering use only) */
     var sslBypassEnabled = false
+
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: android.net.http.SslError) {
+        if (sslBypassEnabled) {
+            handler.proceed()
+        } else {
+            super.onReceivedSslError(view, handler, error)
+        }
+    }
 
 
     private var currentUrl  = ""
@@ -177,4 +181,14 @@ class BrowserWebViewClient(
         scope.cancel()
         injectedUrls.clear()
     }
+}
+
+class BrowserChromeClient(
+    private val onProgressChanged: (Int) -> Unit,
+    private val onTitleReceived:   (String) -> Unit
+) : WebChromeClient() {
+    override fun onProgressChanged(view: WebView, newProgress: Int) = onProgressChanged(newProgress)
+    override fun onReceivedTitle(view: WebView, title: String)      = onTitleReceived(title)
+    override fun onPermissionRequest(request: PermissionRequest)    = request.grant(request.resources)
+    override fun onConsoleMessage(consoleMessage: ConsoleMessage)   = true
 }

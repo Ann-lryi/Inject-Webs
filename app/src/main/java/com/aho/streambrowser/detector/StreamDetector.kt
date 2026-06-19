@@ -8,8 +8,30 @@ import android.webkit.WebResourceRequest
 import com.aho.streambrowser.model.NetworkRequest
 import com.aho.streambrowser.model.StreamItem
 
-// Note: CryptoKeyCapture, WebSocketMessage, ResponseBodyCapture are now declared
-// in their own files (CryptoKeyCapture.kt, WebSocketMessage.kt, ResponseBodyCapture.kt).
+// ── Data classes ─────────────────────────────────────────────────────────────
+
+data class CryptoKeyCapture(
+    val algorithm: String,
+    val key:       String,
+    val iv:        String  = "",
+    val pageUrl:   String  = "",
+    val timestamp: Long    = System.currentTimeMillis()
+)
+
+data class WebSocketMessage(
+    val direction: String,   // "open" | "send" | "recv"
+    val wsUrl:     String,
+    val data:      String,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+data class ResponseBodyCapture(
+    val url:         String,
+    val statusCode:  Int,
+    val contentType: String,
+    val body:        String,
+    val timestamp:   Long = System.currentTimeMillis()
+)
 
 // ── Protected domains ─────────────────────────────────────────────────────────
 

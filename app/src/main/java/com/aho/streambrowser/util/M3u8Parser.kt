@@ -4,6 +4,13 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
+data class M3u8Quality(
+    val bandwidth: Int,
+    val resolution: String,
+    val url: String,
+    val label: String
+)
+
 object M3u8Parser {
 
     private val client = OkHttpClient.Builder()

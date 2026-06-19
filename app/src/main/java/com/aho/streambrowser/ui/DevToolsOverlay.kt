@@ -177,8 +177,8 @@ class DevToolsOverlay(
         val scroll = HorizontalScrollView(context).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT)
-            isVerticalScrollBarEnabled = false
-isHorizontalScrollBarEnabled = false
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
         }
         val strip = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -848,8 +848,10 @@ isHorizontalScrollBarEnabled = false
             val clean = raw?.removeSurrounding("\"")?.replace("\\\"","\"") ?: "{}"
             post { try {
                 val j = org.json.JSONObject(clean); val sb = StringBuilder()
-                sb.appendLine("=== localStorage ==="); j.optJSONObject("l")?.keys()?.forEach { k -> sb.appendLine("$k: ${j.optJSONObject("l")?.optString(k,"")?.take(100)}") }
-                sb.appendLine("\n=== sessionStorage ==="); j.optJSONObject("s")?.keys()?.forEach { k -> sb.appendLine("$k: ${j.optJSONObject("s")?.optString(k,"")?.take(100)}") }
+                sb.appendLine("=== localStorage ===")
+                j.optJSONObject("l")?.keys()?.forEach { k0 -> val k = k0 as String; sb.appendLine("$k: ${j.optJSONObject("l")?.optString(k,"")?.take(100)}") }
+                sb.appendLine("\n=== sessionStorage ===")
+                j.optJSONObject("s")?.keys()?.forEach { k0 -> val k = k0 as String; sb.appendLine("$k: ${j.optJSONObject("s")?.optString(k,"")?.take(100)}") }
                 tvRes.text = sb
             } catch(_:Exception){tvRes.text=clean} }
         }

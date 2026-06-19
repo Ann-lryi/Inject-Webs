@@ -1,27 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:paddingHorizontal="14dp"
-    android:paddingVertical="10dp"
-    android:background="@color/surface"
-    android:layout_marginBottom="4dp">
+    android:padding="12dp"
+    android:background="@color/surface">
 
+    <!-- Header row: type badge + source -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:layout_marginBottom="6dp">
-
-        <View
-            android:id="@+id/qualityDot"
-            android:layout_width="8dp"
-            android:layout_height="8dp"
-            android:layout_marginEnd="6dp"
-            android:background="@drawable/dot_quality"/>
 
         <TextView
             android:id="@+id/tvType"
@@ -32,58 +23,34 @@
             android:textSize="10sp"
             android:textStyle="bold"
             android:textAllCaps="true"
-            android:textColor="@color/chip_hls"
-            android:fontFamily="sans-serif-medium"
-            android:background="@drawable/bg_chip_hls"/>
-
-        <TextView
-            android:id="@+id/tvQuality"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:textColor="@color/text_primary"
-            android:fontFamily="sans-serif-medium"/>
-
-        <View
-            android:layout_width="0dp"
-            android:layout_height="0dp"
-            android:layout_weight="1"/>
+            android:backgroundTint="@color/accent_green"
+            android:background="@drawable/bg_badge"/>
 
         <TextView
             android:id="@+id/tvSource"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
             android:textSize="10sp"
-            android:textColor="@color/text_tertiary"
+            android:textColor="@color/text_secondary"
             android:fontFamily="monospace"/>
 
     </LinearLayout>
 
-    <TextView
-        android:id="@+id/tvCodec"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="4dp"
-        android:textSize="10sp"
-        android:textColor="@color/text_secondary"
-        android:fontFamily="monospace"
-        android:maxLines="1"
-        android:ellipsize="end"/>
-
+    <!-- URL - selectable for easy copy -->
     <TextView
         android:id="@+id/tvUrl"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:textSize="11sp"
-        android:textColor="@color/code_text"
+        android:textColor="@color/text_primary"
         android:fontFamily="monospace"
-        android:maxLines="2"
+        android:maxLines="3"
         android:ellipsize="middle"
         android:textIsSelectable="true"
         android:layout_marginBottom="8dp"/>
 
+    <!-- Action buttons -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -92,57 +59,41 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnShare"
-            style="@style/Widget.Material3.Button.TextButton"
+            style="@style/Widget.Material3.Button.OutlinedButton"
             android:layout_width="wrap_content"
-            android:layout_height="30dp"
+            android:layout_height="32dp"
+            android:layout_marginEnd="8dp"
             android:minWidth="0dp"
-            android:paddingHorizontal="10dp"
-            android:text="Share"
-            android:textSize="10sp"
-            android:textAllCaps="false"
-            android:textColor="@color/text_secondary"
-            app:icon="@drawable/ic_share"
-            app:iconTint="@color/text_secondary"
-            app:iconSize="13dp"
-            app:cornerRadius="6dp"/>
+            android:paddingHorizontal="12dp"
+            android:text="Chia sẻ"
+            android:textSize="11sp"/>
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnCopy"
-            style="@style/Widget.Material3.Button.TextButton"
+            style="@style/Widget.Material3.Button.OutlinedButton"
             android:layout_width="wrap_content"
-            android:layout_height="30dp"
+            android:layout_height="32dp"
+            android:layout_marginEnd="8dp"
             android:minWidth="0dp"
-            android:paddingHorizontal="10dp"
+            android:paddingHorizontal="12dp"
             android:text="Copy"
-            android:textSize="10sp"
-            android:textAllCaps="false"
-            android:textColor="@color/text_secondary"
-            app:icon="@drawable/ic_copy"
-            app:iconTint="@color/text_secondary"
-            app:iconSize="13dp"
-            app:cornerRadius="6dp"/>
+            android:textSize="11sp"/>
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnPlay"
-            style="@style/Widget.Material3.Button.UnelevatedButton"
             android:layout_width="wrap_content"
-            android:layout_height="30dp"
+            android:layout_height="32dp"
             android:minWidth="0dp"
-            android:paddingHorizontal="14dp"
-            android:layout_marginStart="4dp"
-            android:text="Play"
-            android:textSize="10sp"
-            android:textAllCaps="false"
+            android:paddingHorizontal="12dp"
+            android:text="Phát"
+            android:textSize="11sp"
             android:textColor="@color/white"
-            android:fontFamily="sans-serif-medium"
             app:backgroundTint="@color/accent_green"
-            app:icon="@drawable/ic_play"
-            app:iconTint="@color/white"
-            app:iconSize="12dp"
-            app:cornerRadius="6dp"/>
+            xmlns:app="http://schemas.android.com/apk/res-auto"/>
 
     </LinearLayout>
 
+    <!-- Divider -->
     <View
         android:layout_width="match_parent"
         android:layout_height="0.5dp"

@@ -32,7 +32,6 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
-import com.aho.streambrowser.R
 import com.aho.streambrowser.databinding.ActivityMainBinding
 import com.aho.streambrowser.detector.BrowserChromeClient
 import com.aho.streambrowser.detector.BrowserWebViewClient
@@ -108,7 +107,7 @@ class MainActivity : AppCompatActivity() {
         // Auto-save streams to history via ViewModel
         detector.onStreamFound = { stream ->
             vm.saveStream(stream)
-            runOnUiThread { updateFab(); updateStreamBadge() }
+            runOnUiThread { updateFab() }
         }
         detector.onRequestAdded = { runOnUiThread { updateFab() } }
     }
@@ -159,7 +158,7 @@ class MainActivity : AppCompatActivity() {
                 renderTabStrip()
             }}
         )
-        b.swipeRefresh.setColorSchemeColors(0xFF10B981.toInt())
+        b.swipeRefresh.setColorSchemeColors(0xFF1D9E75.toInt())
         b.swipeRefresh.setOnRefreshListener {
             b.webView.reload()
             b.swipeRefresh.postDelayed({ b.swipeRefresh.isRefreshing = false }, 500)
@@ -221,7 +220,6 @@ class MainActivity : AppCompatActivity() {
         b.btnDevTools.setOnClickListener     { openDevTools() }
         b.btnDevTools.setOnLongClickListener { showQuickActions(); true }
         b.btnPickerFloat.setOnClickListener  { b.btnPickerFloat.isVisible = !b.btnPickerFloat.isVisible }
-        b.btnHide.setOnClickListener         { closeDevTools() }
     }
 
     private fun setupDetector() {
@@ -240,7 +238,7 @@ class MainActivity : AppCompatActivity() {
                 setPadding((8*dp).toInt(), 0, (4*dp).toInt(), 0)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = (2*dp).toInt() }
-                setBackgroundColor(if (isCurrent) Color.parseColor("#10B981") else Color.parseColor("#1E1E1E"))
+                setBackgroundColor(if (isCurrent) Color.parseColor("#1D9E75") else Color.parseColor("#1E1E1E"))
                 setOnClickListener { switchTab(idx) }
             }
             val label = TextView(this).apply {
@@ -259,7 +257,7 @@ class MainActivity : AppCompatActivity() {
         }
         val addBtn = TextView(this).apply {
             text = " + "; textSize = 14f
-            setTextColor(Color.parseColor("#10B981")); gravity = android.view.Gravity.CENTER
+            setTextColor(Color.parseColor("#1D9E75")); gravity = android.view.Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams((32*dp).toInt(), LinearLayout.LayoutParams.MATCH_PARENT)
             setOnClickListener { openNewTab() }
             setOnLongClickListener { showTabManager(); true }
@@ -343,7 +341,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateFab() {
         val s = detector.streamCount(); val r = detector.requestCount()
-        when { s>0 -> { b.btnDevTools.text="$s Streams"; b.btnDevTools.extend() }
+        when { s>0 -> { b.btnDevTools.text="● $s Stream"; b.btnDevTools.extend() }
                r>0 -> { b.btnDevTools.text="DevTools ($r)"; b.btnDevTools.shrink() }
                else -> { b.btnDevTools.text="DevTools"; b.btnDevTools.shrink() } }
     }
@@ -365,10 +363,10 @@ class MainActivity : AppCompatActivity() {
             CookieManager.getInstance().removeAllCookies(null)
             b.webView.clearCache(true); b.webView.clearHistory()
             b.webView.settings.cacheMode = WebSettings.LOAD_NO_CACHE
-            b.toolbar.setBackgroundColor(Color.parseColor("#1F2937"))
+            b.toolbar.setBackgroundColor(Color.parseColor("#1A1A2A"))
         } else {
             b.webView.settings.cacheMode = WebSettings.LOAD_DEFAULT
-            b.toolbar.background = androidx.core.content.ContextCompat.getDrawable(this, R.drawable.bg_toolbar)
+            b.toolbar.setBackgroundColor(Color.parseColor("#141414"))
         }
         Toast.makeText(this, if (isIncognito) "🕵 Incognito ON" else "🔓 OFF", Toast.LENGTH_SHORT).show()
     }
@@ -412,64 +410,19 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, if (host.isBlank()) "Proxy cleared" else "Proxy: $host:$port", Toast.LENGTH_SHORT).show()
     }
 
+    private var devToolsOverlay: DevToolsOverlay? = null
+
     private fun openDevTools() {
-        if (b.devToolsContainer.visibility == android.view.View.VISIBLE) return
-
-        // Add DevTools fragment to right panel
-        val sheet = DevToolsSheet(detector, b.webView, this) { playStream(it) }
-        supportFragmentManager.beginTransaction()
-            .replace(R.id.devToolsContainer, sheet, DevToolsSheet.TAG)
-            .commit()
-
-        // Shrink WebView to 40%
-        val lp = b.webFrame.layoutParams as android.widget.LinearLayout.LayoutParams
-        lp.weight = 2f
-        b.webFrame.layoutParams = lp
-        val lp2 = b.devToolsContainer.layoutParams as android.widget.LinearLayout.LayoutParams
-        lp2.weight = 3f
-        b.devToolsContainer.layoutParams = lp2
-        b.devToolsContainer.visibility = android.view.View.VISIBLE
-
-        // Show Hide button + Streams badge
-        b.btnHide.visibility = android.view.View.VISIBLE
-        updateStreamBadge()
-
-        // Hide FAB
-        b.btnDevTools.hide()
-    }
-
-    private fun closeDevTools() {
-        // Remove DevTools fragment
-        val sheet = supportFragmentManager.findFragmentByTag(DevToolsSheet.TAG) as? DevToolsSheet
-        if (sheet != null) {
-            supportFragmentManager.beginTransaction().remove(sheet).commit()
+        if (devToolsOverlay == null) {
+            devToolsOverlay = DevToolsOverlay(this, detector, b.webView, this) { playStream(it) }
+            val root = window.decorView as android.widget.FrameLayout
+            root.addView(devToolsOverlay, android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+            ))
+            devToolsOverlay?.visibility = android.view.View.GONE
         }
-
-        // Restore WebView to full width
-        val lp = b.webFrame.layoutParams as android.widget.LinearLayout.LayoutParams
-        lp.weight = 1f
-        b.webFrame.layoutParams = lp
-        val lp2 = b.devToolsContainer.layoutParams as android.widget.LinearLayout.LayoutParams
-        lp2.weight = 0f
-        b.devToolsContainer.layoutParams = lp2
-        b.devToolsContainer.visibility = android.view.View.GONE
-
-        // Hide overlays
-        b.btnHide.visibility = android.view.View.GONE
-        b.tvStreamBadge.visibility = android.view.View.GONE
-
-        // Show FAB
-        b.btnDevTools.show()
-    }
-
-    private fun updateStreamBadge() {
-        val count = detector.streamCount()
-        if (count > 0) {
-            b.tvStreamBadge.text = "$count Streams"
-            b.tvStreamBadge.visibility = android.view.View.VISIBLE
-        } else {
-            b.tvStreamBadge.visibility = android.view.View.GONE
-        }
+        devToolsOverlay?.show()
     }
 
     private fun playStream(item: StreamItem) {

@@ -32,16 +32,10 @@ data class NetworkRequest(
         else -> "REQ"
     }
     val tagColor: String get() = when (tag) {
-        "HLS"   -> "#10B981"
-        "MP4"   -> "#3B82F6"
-        "DASH"  -> "#8B5CF6"
-        "FLV"   -> "#F59E0B"
-        "STREAM"-> "#10B981"
-        "API","JSON" -> "#3B82F6"
-        "JS"    -> "#F59E0B"
-        "CSS"   -> "#8B5CF6"
-        "IMG"   -> "#14B8A6"
-        else    -> "#6B7280"
+        "HLS","DASH","MP4","FLV","STREAM" -> "#1B5E20"
+        "API","JSON" -> "#0D47A1"
+        "JS"  -> "#E65100"
+        else  -> "#37474F"
     }
 
     /** Parse query parameters from URL */

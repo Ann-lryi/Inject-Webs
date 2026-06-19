@@ -5,14 +5,11 @@
         <item name="colorPrimaryVariant">@color/accent_green_dark</item>
         <item name="colorOnPrimary">@color/white</item>
         <item name="colorSurface">@color/surface</item>
-        <item name="colorOnSurface">@color/text_primary</item>
-        <item name="android:colorBackground">@color/bg_browser</item>
+        <!-- Transparent bars — insets handled in code -->
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowBackground">@color/bg_browser</item>
-        <item name="tabIndicatorColor">@color/accent_green</item>
-        <item name="tabTextColor">@color/text_secondary</item>
-        <item name="tabSelectedTextColor">@color/accent_green</item>
+        <!-- Android 15+ edge-to-edge: allow code to manage insets -->
         <item name="android:windowOptOutEdgeToEdgeEnforcement" tools:targetApi="35">false</item>
     </style>
 </resources>
