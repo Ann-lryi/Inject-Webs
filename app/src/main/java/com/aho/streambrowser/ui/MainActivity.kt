@@ -1,5 +1,6 @@
 package com.aho.streambrowser.ui
 
+import com.aho.streambrowser.R
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.app.DownloadManager

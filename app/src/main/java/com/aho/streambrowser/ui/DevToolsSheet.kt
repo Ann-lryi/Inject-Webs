@@ -50,6 +50,12 @@ class DevToolsSheet(
     private var currentTab = 0
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
+    /** Helper: Fragment has no post() directly — delegate to view, fallback to scope.launch */
+    private fun post(action: () -> Unit) {
+        val v = view
+        if (v != null) v.post(action) else scope.launch { action() }
+    }
+
     override fun onCreateView(i: LayoutInflater, c: ViewGroup?, s: Bundle?) = buildRoot()
     override fun onDestroyView() { super.onDestroyView(); scope.cancel() }
 
@@ -1466,7 +1472,12 @@ class DevToolsSheet(
             addView(inner)
         }
         val url = webView.url ?: ""
-        val site = url.let { runCatching { java.net.URL(it).let { u -> "${u.protocol}://${u.host}" } }.getOrElse { it } }
+        val site = url.let { rawUrl ->
+            runCatching {
+                val u = java.net.URL(rawUrl)
+                "${u.protocol}://${u.host}"
+            }.getOrElse { rawUrl }
+        }
 
         inner.addView(sectionHeader(ctx, "☁ CloudStream3 Plugin Generator"))
         inner.addView(tv(ctx, "Site: $site", "#888", 10f).apply { setPadding(0, 0, 0, 8.dp) })
