@@ -9,6 +9,7 @@ enum class StreamType {
     DASH, 
     FLV,
     WEBM,      // WebM format
+    M3U9,      // Non-standard ".m3u9" obfuscated-HLS extension used by some sites
     WEBSOCKET, // WebSocket streaming
     RTMP,      // RTMP streams
     OTHER      // Unknown/other
@@ -52,6 +53,7 @@ data class StreamItem(
         StreamType.DASH      -> "DASH/MPD"
         StreamType.FLV       -> "FLV"
         StreamType.WEBM      -> "WebM"
+        StreamType.M3U9      -> "M3U9"
         StreamType.WEBSOCKET -> "WebSocket"
         StreamType.RTMP      -> "RTMP"
         StreamType.OTHER     -> "Stream"
@@ -102,7 +104,10 @@ data class StreamItem(
                 l.contains("hls.v") ||
                 l.contains("manifest/m3u8") ||
                 l.contains(".m3u") -> StreamType.HLS
-                
+
+                // M3U9 - non-standard obfuscated-HLS extension (some sites use this)
+                l.contains(".m3u9") -> StreamType.M3U9
+
                 // DASH - Adaptive streaming
                 l.contains(".mpd") || 
                 l.contains("/dash/") ||

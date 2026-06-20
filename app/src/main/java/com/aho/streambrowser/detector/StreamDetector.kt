@@ -33,6 +33,18 @@ data class ResponseBodyCapture(
     val timestamp:   Long = System.currentTimeMillis()
 )
 
+/**
+ * Activity / event log entry shown in the "Console" tab feed.
+ * level: "success" (✓) | "warn" (⚠) | "info" (›)
+ * Only emitted from events the app genuinely detects — see addLog() call sites.
+ */
+data class ActivityLogEntry(
+    val level:     String,
+    val message:   String,
+    val source:    String = "",
+    val timestamp: Long = System.currentTimeMillis()
+)
+
 // ── Protected domains ─────────────────────────────────────────────────────────
 
 val PROTECTED_DOMAINS = listOf(
@@ -671,12 +683,14 @@ class StreamDetector(private val context: Context? = null) {
     private val _cryptoKeys    = mutableListOf<CryptoKeyCapture>()
     private val _wsMessages     = mutableListOf<WebSocketMessage>()
     private val _responseBodies = mutableListOf<ResponseBodyCapture>()
+    private val _activityLog    = mutableListOf<ActivityLogEntry>()
 
     val streams:        List<StreamItem>          get() = synchronized(this) { _streams.toList()        }
     val requests:       List<NetworkRequest>      get() = synchronized(this) { _requests.toList()       }
     val cryptoKeys:     List<CryptoKeyCapture>    get() = synchronized(this) { _cryptoKeys.toList()     }
     val wsMessages:     List<WebSocketMessage>      get() = synchronized(this) { _wsMessages.toList()      }
     val responseBodies: List<ResponseBodyCapture> get() = synchronized(this) { _responseBodies.toList() }
+    val activityLog:    List<ActivityLogEntry>    get() = synchronized(this) { _activityLog.toList()    }
 
     var onStreamFound:  ((StreamItem)     -> Unit)? = null
     var onRequestAdded: ((NetworkRequest) -> Unit)? = null
@@ -707,12 +721,21 @@ class StreamDetector(private val context: Context? = null) {
             addStream(StreamItem(url=url, type=streamType, source=source, referer=referer))
     }
 
+    /** Activity-log feed shown in the Console tab. Only call this from real, verified events. */
+    fun addLog(level: String, message: String, source: String = "") {
+        synchronized(this) {
+            _activityLog.add(0, ActivityLogEntry(level, message, source))
+            if (_activityLog.size > 200) _activityLog.removeAt(_activityLog.lastIndex)
+        }
+    }
+
     /** B4: Add WebSocket message */
     fun addWebSocketMessage(msg: WebSocketMessage) {
         synchronized(this) {
             _wsMessages.add(0, msg)
             if (_wsMessages.size > 200) _wsMessages.removeAt(_wsMessages.lastIndex)
         }
+        if (msg.direction == "open") addLog("info", "WebSocket connected: ${msg.wsUrl}", "ws")
     }
 
     /** A5: Get stream capture timestamp */
@@ -746,6 +769,7 @@ class StreamDetector(private val context: Context? = null) {
             if (_cryptoKeys.none { it.key == capture.key && it.algorithm == capture.algorithm }) {
                 _cryptoKeys.add(0, capture)
                 if (_cryptoKeys.size > 50) _cryptoKeys.removeAt(_cryptoKeys.lastIndex)
+                addLog("warn", "CryptoKey captured: ${capture.algorithm}", "crypto")
             }
         }
     }
@@ -789,6 +813,8 @@ class StreamDetector(private val context: Context? = null) {
     @Synchronized private fun addStream(item: StreamItem) {
         if (_streams.any { it.url == item.url }) return
         _streams.add(0, item)
+        val fileName = item.url.substringBefore("?").substringAfterLast("/").take(40)
+        addLog("success", "Stream found: $fileName (via ${item.source})", "stream")
         onStreamFound?.invoke(item)
         vibrate()
     }
@@ -796,7 +822,7 @@ class StreamDetector(private val context: Context? = null) {
     fun clear() = synchronized(this) {
         _streams.clear(); _requests.clear()
         _cryptoKeys.clear(); _responseBodies.clear()
-        _wsMessages.clear()
+        _wsMessages.clear(); _activityLog.clear()
     }
     fun streamCount()  = synchronized(this) { _streams.size  }
     fun requestCount() = synchronized(this) { _requests.size }

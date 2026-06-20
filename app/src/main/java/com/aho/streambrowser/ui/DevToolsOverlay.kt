@@ -7,7 +7,7 @@ import android.graphics.*
 import android.view.*
 import android.webkit.WebView
 import android.widget.*
-import androidx.core.content.ContextCompat
+import com.aho.streambrowser.detector.ActivityLogEntry
 import com.aho.streambrowser.detector.StreamDetector
 import com.aho.streambrowser.model.NetworkRequest
 import com.aho.streambrowser.model.StreamItem
@@ -15,7 +15,7 @@ import com.aho.streambrowser.model.StreamType
 import com.aho.streambrowser.util.*
 import kotlinx.coroutines.*
 
-/** DevTools Pro overlay panel — slides from right, matches InjectWebs v5 design */
+/** DevTools Pro overlay panel — slides from right, matches design reference v5 */
 @SuppressLint("ViewConstructor")
 class DevToolsOverlay(
     context:    Context,
@@ -48,14 +48,28 @@ class DevToolsOverlay(
     private val C_IMG  = Color.parseColor("#6366F1")
     private val C_DOC  = Color.parseColor("#64748B")
 
+    // Crypto-card backgrounds (CryptoJS = amber-tinted, SubtleCrypto = blue-tinted)
+    private val C_WARN_BG = Color.parseColor("#2A1F0D")
+    private val C_BLUE_BG = Color.parseColor("#0F1A2A")
+
+    // Network tab "Timing" legend — decorative only: NetworkRequest has a single
+    // timestamp, not per-phase DNS/Connect/TTFB/Download data, so the waterfall bar
+    // stays a single colored segment. Flagging this so nobody assumes real phase data.
+    private val C_TIMING_DNS      = Color.parseColor("#3B82F6")
+    private val C_TIMING_CONNECT  = Color.parseColor("#F59E0B")
+    private val C_TIMING_TTFB     = Color.parseColor("#1DB954")
+    private val C_TIMING_DOWNLOAD = Color.parseColor("#8B5CF6")
+
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val dp get() = context.resources.displayMetrics.density
 
+    private lateinit var panelView: LinearLayout
     private lateinit var tabStrip: LinearLayout
     private lateinit var contentArea: FrameLayout
     private lateinit var tvLive: TextView
     private var currentTab = 0
     private var networkFilter = "All"
+    private var streamGroupByType = false
     private var snapshotUrls: Set<String> = emptySet()
     private val consoleHistory = mutableListOf<String>()
 
@@ -66,7 +80,7 @@ class DevToolsOverlay(
 
     // ── Setup ─────────────────────────────────────────────────────────────────
     private fun setupOverlay() {
-        // Backdrop (tap to close)
+        // Backdrop (tap to close) — stays full-size and in place; only the panel slides
         val backdrop = View(context).apply {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
             setBackgroundColor(Color.parseColor("#88000000"))
@@ -76,24 +90,29 @@ class DevToolsOverlay(
 
         // Panel (88% width from right, 94% height, centered vertically)
         val panelW = (screenWidth * 0.88f).toInt()
-        val panel  = LinearLayout(context).apply {
+        panelView = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(BG_PANEL)
             layoutParams = LayoutParams(panelW, (screenHeight * 0.94f).toInt()).apply {
                 gravity  = Gravity.END or Gravity.CENTER_VERTICAL
                 rightMargin = 0
             }
+            // FIX: this used to be set on the outer DevToolsOverlay (`this`), which also
+            // wraps the backdrop — that pushed the WHOLE overlay (dim + panel) off-screen
+            // permanently, since show()'s animator only ever reset the panel, never the
+            // parent. Setting it on the panel itself is what lets it slide in correctly.
+            translationX = panelW.toFloat()
         }
 
         // Header
-        panel.addView(buildHeader())
+        panelView.addView(buildHeader())
 
         // Tab strip
         tabStrip = buildTabStrip()
-        panel.addView(tabStrip)
+        panelView.addView(tabStrip)
 
         // Divider
-        panel.addView(View(context).apply {
+        panelView.addView(View(context).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
             setBackgroundColor(DIVIDER)
         })
@@ -103,10 +122,9 @@ class DevToolsOverlay(
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
             setBackgroundColor(BG_PANEL)
         }
-        panel.addView(contentArea)
-        addView(panel)
+        panelView.addView(contentArea)
+        addView(panelView)
 
-        translationX = panelW.toFloat()
         showTab(0)
     }
 
@@ -128,6 +146,14 @@ class DevToolsOverlay(
             text = "DevTools Pro"
             textSize = 14f; setTextColor(TEXT_PRI)
             typeface = Typeface.DEFAULT_BOLD
+        }
+        // Version badge
+        val verBadge = TextView(context).apply {
+            text = "v5"; textSize = 9f; setTextColor(TEXT_SEC)
+            setPadding(dp(5), dp(1), dp(5), dp(1))
+            background = roundRect(BG_BADGE, 4f)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(6) }
         }
         // Live badge
         tvLive = TextView(context).apply {
@@ -166,7 +192,7 @@ class DevToolsOverlay(
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(4) }
         }
-        listOf(logo, tvLive, spacer, tvCounts, btnClear, btnHide).forEach { row.addView(it) }
+        listOf(logo, verBadge, tvLive, spacer, tvCounts, btnClear, btnHide).forEach { row.addView(it) }
         return row
     }
 
@@ -249,7 +275,7 @@ class DevToolsOverlay(
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // TAB 0: Network — type badges + waterfall
+    // TAB 0: Network — filter chips, timing legend, method/url/status/type/size/waterfall
     // ═══════════════════════════════════════════════════════════════════════════
     private fun buildNetworkTab(): View {
         val outer = LinearLayout(context).apply {
@@ -257,7 +283,7 @@ class DevToolsOverlay(
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         }
         // Filter strip
-        val filters = listOf("All","Streams","XHR","JS","CSS","Doc","Img")
+        val filters = listOf("All","Streams","Xhr","Js","Css","Redirects")
         val filterRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(BG_HEADER)
@@ -300,19 +326,34 @@ class DevToolsOverlay(
         filterRow.addView(actRow)
         outer.addView(filterRow)
 
+        // Timing legend — decorative reference only, see comment on the C_TIMING_* tokens
+        val legend = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.parseColor("#0F0F0F"))
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+        }
+        legend.addView(TextView(context).apply {
+            text = "Timing:"; textSize = 8.5f; setTextColor(TEXT_DIM)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6) }
+        })
+        listOf("DNS" to C_TIMING_DNS, "Connect" to C_TIMING_CONNECT, "TTFB" to C_TIMING_TTFB, "Download" to C_TIMING_DOWNLOAD)
+            .forEach { (label, color) -> legend.addView(legendDot(label, color)) }
+        outer.addView(legend)
+
         // Column headers
         outer.addView(buildNetworkHeader())
 
         // Request list
         val reqs = detector.requests.filter { req ->
             when (networkFilter) {
-                "Streams" -> req.isStream
-                "XHR"     -> req.tag == "XHR"
-                "JS"      -> req.tag == "JS"
-                "CSS"     -> req.tag == "CSS"
-                "Doc"     -> req.tag == "DOC"
-                "Img"     -> req.tag == "IMG"
-                else      -> true
+                "Streams"   -> req.isStream
+                "Xhr"       -> req.tag == "XHR"
+                "Js"        -> req.tag == "JS"
+                "Css"       -> req.tag == "CSS"
+                "Redirects" -> req.statusCode in 300..399
+                else        -> true
             }
         }
         val sv = ScrollView(context).apply {
@@ -331,12 +372,24 @@ class DevToolsOverlay(
         return outer
     }
 
+    private fun legendDot(label: String, color: Int): View = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(10) }
+        addView(View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(6), dp(6)).apply { marginEnd = dp(3) }
+            background = roundRect(color, 3f)
+        })
+        addView(TextView(context).apply { text = label; textSize = 8.5f; setTextColor(TEXT_SEC) })
+    }
+
     private fun buildNetworkHeader(): View = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         setBackgroundColor(Color.parseColor("#0F0F0F"))
         setPadding(dp(8), dp(4), dp(8), dp(4))
         listOf(
-            "Type" to 44f, "URL/Host" to 0f, "St" to 28f, "Size" to 36f, "Waterfall" to 60f
+            "" to 16f, "Method" to 38f, "URL" to 0f, "Status" to 32f, "Type" to 38f, "Size" to 38f, "Waterfall" to 56f
         ).forEach { (label, w) ->
             addView(TextView(context).apply {
                 text = label; textSize = 8.5f; setTextColor(TEXT_DIM)
@@ -348,24 +401,45 @@ class DevToolsOverlay(
         }
     }
 
+    /** Small category glyph + color shown before METHOD — closest native equivalent
+     *  to the icon set in the reference design (no icon font is bundled in this project). */
+    private fun rowIcon(req: NetworkRequest): Pair<String, Int> = when {
+        req.statusCode in 300..399 -> "↻" to C_M3U9
+        req.isStream                -> "▶" to typeColor(req.tag)
+        else                        -> "●" to typeColor(req.tag)
+    }
+
     private fun buildNetworkRow(req: NetworkRequest, t0: Long, tRange: Long): View {
-        val typeColor = typeColor(req.tag)
+        val typeCol = typeColor(req.tag)
+        val (icon, iconColor) = rowIcon(req)
         val row = LinearLayout(context).apply {
             orientation  = LinearLayout.HORIZONTAL
-            gravity      = Gravity.CENTER_VERTICAL
-            setPadding(dp(8), dp(6), dp(8), dp(6))
             setBackgroundColor(BG_CARD2)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 1 }
             setOnClickListener { showRequestDetail(req) }
         }
-        // Type badge
-        row.addView(TextView(context).apply {
-            text = req.tag; textSize = 8f; setTextColor(Color.BLACK)
-            setBackgroundColor(typeColor)
-            setPadding(dp(3), dp(1), dp(3), dp(1))
-            layoutParams = LinearLayout.LayoutParams(dp(44), LinearLayout.LayoutParams.WRAP_CONTENT)
+        // 3dp colored left strip — native stand-in for the design's colored row border
+        row.addView(View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(3), LinearLayout.LayoutParams.MATCH_PARENT)
+            setBackgroundColor(typeCol)
+        })
+        val content = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(6), dp(6), dp(8), dp(6))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        // Category icon
+        content.addView(TextView(context).apply {
+            text = icon; textSize = 11f; setTextColor(iconColor)
+            layoutParams = LinearLayout.LayoutParams(dp(16), LinearLayout.LayoutParams.WRAP_CONTENT)
             gravity = Gravity.CENTER
+        })
+        // Method
+        content.addView(TextView(context).apply {
+            text = req.method; textSize = 9f; setTextColor(TEXT_SEC)
+            layoutParams = LinearLayout.LayoutParams(dp(38), LinearLayout.LayoutParams.WRAP_CONTENT)
         })
         // Host + path
         val hostCol = LinearLayout(context).apply {
@@ -374,43 +448,59 @@ class DevToolsOverlay(
             setPadding(dp(4), 0, dp(4), 0)
         }
         hostCol.addView(TextView(context).apply {
-            text = req.host.take(28); textSize = 10f; setTextColor(TEXT_PRI)
+            text = req.host.take(24); textSize = 10f; setTextColor(TEXT_PRI)
             maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
         })
         hostCol.addView(TextView(context).apply {
-            text = req.path.take(36); textSize = 8.5f; setTextColor(TEXT_SEC)
+            text = req.path.take(30); textSize = 8.5f; setTextColor(TEXT_SEC)
             maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
         })
-        row.addView(hostCol)
+        content.addView(hostCol)
         // Status
         val statusColor = when {
             req.statusCode in 200..299 -> ACCENT
-            req.statusCode in 300..399 -> C_CSS
+            req.statusCode in 300..399 -> C_M3U9
             req.statusCode >= 400      -> Color.parseColor("#EF4444")
             else -> TEXT_DIM
         }
-        row.addView(TextView(context).apply {
+        content.addView(TextView(context).apply {
             text = if (req.statusCode > 0) req.statusCode.toString() else "…"
             textSize = 9f; setTextColor(statusColor)
-            layoutParams = LinearLayout.LayoutParams(dp(28), LinearLayout.LayoutParams.WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(dp(32), LinearLayout.LayoutParams.WRAP_CONTENT)
+            gravity = Gravity.CENTER
+        })
+        // Type badge
+        content.addView(TextView(context).apply {
+            text = req.tag; textSize = 7.5f; setTextColor(Color.BLACK)
+            setBackgroundColor(typeCol)
+            setPadding(dp(3), dp(1), dp(3), dp(1))
+            layoutParams = LinearLayout.LayoutParams(dp(38), LinearLayout.LayoutParams.WRAP_CONTENT)
             gravity = Gravity.CENTER
         })
         // Size
         val sizeStr = when {
-            req.responseBodyPreview.isEmpty()    -> "—"
-            req.responseBodyPreview.length < 1024 -> "${req.responseBodyPreview.length}B"
+            req.contentLength > 0                  -> formatBytes(req.contentLength)
+            req.responseBodyPreview.isEmpty()       -> "—"
+            req.responseBodyPreview.length < 1024   -> "${req.responseBodyPreview.length}B"
             else -> "${req.responseBodyPreview.length/1024}K"
         }
-        row.addView(TextView(context).apply {
+        content.addView(TextView(context).apply {
             text = sizeStr; textSize = 8.5f; setTextColor(TEXT_SEC)
-            layoutParams = LinearLayout.LayoutParams(dp(36), LinearLayout.LayoutParams.WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(dp(38), LinearLayout.LayoutParams.WRAP_CONTENT)
             gravity = Gravity.END
         })
         // Waterfall bar
         val rel    = ((req.timestamp - t0).toFloat() / tRange).coerceIn(0f, 0.9f)
         val barW   = (0.08f + rel * 0.02f).coerceAtMost(0.15f)
-        row.addView(buildWaterfallBar(rel, barW, typeColor))
+        content.addView(buildWaterfallBar(rel, barW, typeCol))
+        row.addView(content)
         return row
+    }
+
+    private fun formatBytes(b: Long): String = when {
+        b >= 1_000_000 -> String.format("%.1f MB", b / 1_000_000.0)
+        b >= 1_000     -> String.format("%.1f KB", b / 1_000.0)
+        else           -> "$b B"
     }
 
     private fun buildWaterfallBar(offset: Float, width: Float, color: Int): View {
@@ -433,7 +523,7 @@ class DevToolsOverlay(
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // TAB 1: Streams — grouped by quality, codec info
+    // TAB 1: Streams — grouped by quality (or type), codec info
     // ═══════════════════════════════════════════════════════════════════════════
     private fun buildStreamsTab(): View {
         val outer = LinearLayout(context).apply {
@@ -453,67 +543,89 @@ class DevToolsOverlay(
             textSize = 12f; setTextColor(TEXT_PRI); typeface = Typeface.DEFAULT_BOLD
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
-        listOf("By Quality", "Export All").forEach { label ->
+        listOf("By Quality" to false, "By Type" to true).forEach { (label, isType) ->
             hdr.addView(TextView(context).apply {
-                text = label; textSize = 9f; setTextColor(TEXT_SEC)
+                text = label; textSize = 9f
+                setTextColor(if (streamGroupByType == isType) Color.BLACK else TEXT_SEC)
                 setPadding(dp(7), dp(3), dp(7), dp(3))
-                background = roundRect(BG_BADGE, 4f)
+                background = roundRect(if (streamGroupByType == isType) ACCENT else BG_BADGE, 4f)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(4) }
-                setOnClickListener { if (label == "Export All") exportAllStreams(streams) }
+                setOnClickListener { streamGroupByType = isType; showTab(1) }
             })
         }
+        hdr.addView(TextView(context).apply {
+            text = "Export All"; textSize = 9f; setTextColor(TEXT_SEC)
+            setPadding(dp(7), dp(3), dp(7), dp(3))
+            background = roundRect(BG_BADGE, 4f)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(4) }
+            setOnClickListener { exportAllStreams(streams) }
+        })
         outer.addView(hdr)
 
         if (streams.isEmpty()) { outer.addView(emptyState("Chưa có streams. Mở trang video.")); return outer }
 
-        // Group by quality
         val sv = ScrollView(context).apply { overScrollMode = View.OVER_SCROLL_NEVER }
         val inner = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
 
-        // Quality groups
-        val groups = linkedMapOf(
-            "1080p" to mutableListOf<StreamItem>(),
-            "720p"  to mutableListOf(),
-            "480p"  to mutableListOf(),
-            "360p"  to mutableListOf(),
-            "Auto"  to mutableListOf()
-        )
-        streams.forEach { s ->
-            val q = when {
-                s.url.contains("1080") || s.url.contains("fhd") -> "1080p"
-                s.url.contains("720")  || s.url.contains("hd")  -> "720p"
-                s.url.contains("480")                            -> "480p"
-                s.url.contains("360")                            -> "360p"
-                else                                              -> "Auto"
+        if (streamGroupByType) {
+            val groups = linkedMapOf<String, MutableList<StreamItem>>()
+            streams.forEach { s -> groups.getOrPut(s.label) { mutableListOf() }.add(s) }
+            groups.forEach { (label, list) ->
+                inner.addView(groupHeader(label, list.size, streamTypeColor(list.first().type)))
+                list.forEach { stream -> inner.addView(buildStreamCard(stream, stream.qualityLabel.ifEmpty { "Auto" })) }
             }
-            groups[q]?.add(s)
-        }
-
-        groups.forEach { (quality, list) ->
-            if (list.isEmpty()) return@forEach
-            // Quality group header
-            inner.addView(LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity     = Gravity.CENTER_VERTICAL
-                setPadding(dp(12), dp(8), dp(12), dp(6))
-                addView(TextView(context).apply {
-                    text = quality; textSize = 11f; setTextColor(TEXT_PRI)
-                    typeface = Typeface.DEFAULT_BOLD
-                })
-                addView(TextView(context).apply {
-                    text = "(${list.size})"; textSize = 10f; setTextColor(TEXT_SEC)
-                    setPadding(dp(4), 0, 0, 0)
-                })
-                addView(View(context).apply {
-                    layoutParams = LinearLayout.LayoutParams(0, 1, 1f).apply { marginStart = dp(8) }
-                    setBackgroundColor(DIVIDER)
-                })
-            })
-            list.forEach { stream -> inner.addView(buildStreamCard(stream, quality)) }
+        } else {
+            // Group by quality
+            val groups = linkedMapOf(
+                "1080p" to mutableListOf<StreamItem>(),
+                "720p"  to mutableListOf(),
+                "480p"  to mutableListOf(),
+                "360p"  to mutableListOf(),
+                "Auto"  to mutableListOf()
+            )
+            streams.forEach { s ->
+                val q = when {
+                    s.url.contains("1080") || s.url.contains("fhd") -> "1080p"
+                    s.url.contains("720")  || s.url.contains("hd")  -> "720p"
+                    s.url.contains("480")                            -> "480p"
+                    s.url.contains("360")                            -> "360p"
+                    else                                              -> "Auto"
+                }
+                groups[q]?.add(s)
+            }
+            val dotColors = mapOf("1080p" to ACCENT, "720p" to C_MP4, "480p" to TEXT_SEC, "360p" to TEXT_DIM, "Auto" to C_DASH)
+            groups.forEach { (quality, list) ->
+                if (list.isEmpty()) return@forEach
+                inner.addView(groupHeader(quality, list.size, dotColors[quality] ?: TEXT_SEC))
+                list.forEach { stream -> inner.addView(buildStreamCard(stream, quality)) }
+            }
         }
         sv.addView(inner); outer.addView(sv)
         return outer
+    }
+
+    private fun groupHeader(title: String, count: Int, dotColor: Int): View = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity     = Gravity.CENTER_VERTICAL
+        setPadding(dp(12), dp(8), dp(12), dp(6))
+        addView(View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(7), dp(7)).apply { marginEnd = dp(6) }
+            background = roundRect(dotColor, 4f)
+        })
+        addView(TextView(context).apply {
+            text = title; textSize = 11f; setTextColor(TEXT_PRI)
+            typeface = Typeface.DEFAULT_BOLD
+        })
+        addView(TextView(context).apply {
+            text = "($count)"; textSize = 10f; setTextColor(TEXT_SEC)
+            setPadding(dp(4), 0, 0, 0)
+        })
+        addView(View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(0, 1, 1f).apply { marginStart = dp(8) }
+            setBackgroundColor(DIVIDER)
+        })
     }
 
     private fun buildStreamCard(stream: StreamItem, quality: String): View {
@@ -521,14 +633,13 @@ class DevToolsOverlay(
         val card = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(BG_CARD)
-            setBackgroundColor(BG_CARD)
             setPadding(dp(12), dp(10), dp(12), dp(10))
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                 bottomMargin = dp(2); marginStart = dp(8); marginEnd = dp(8)
             }
         }
-        // Type + quality + detection badges row
+        // Type + quality + codec badges row
         val badges = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -543,24 +654,19 @@ class DevToolsOverlay(
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(4) }
         })
-        val codec = when {
-            stream.url.contains("avc") || stream.url.contains("h264") -> "H.264"
-            stream.url.contains("hevc") || stream.url.contains("h265") -> "H.265"
-            stream.url.contains("vp9") -> "VP9"
-            stream.url.contains("av1") -> "AV1"
-            else -> ""
+        stream.codec?.let { codec ->
+            badges.addView(TextView(context).apply {
+                text = codec; textSize = 9f; setTextColor(TEXT_SEC)
+                setPadding(dp(5), dp(1), dp(5), dp(1))
+                background = roundRect(BG_BADGE, 3f)
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(4) }
+            })
         }
-        if (codec.isNotBlank()) badges.addView(TextView(context).apply {
-            text = codec; textSize = 9f; setTextColor(TEXT_SEC)
-            setPadding(dp(5), dp(1), dp(5), dp(1))
-            background = roundRect(BG_BADGE, 3f)
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(4) }
-        })
         // Source badge
         badges.addView(View(context).apply { layoutParams = LinearLayout.LayoutParams(0,1,1f) })
         badges.addView(TextView(context).apply {
-            text = stream.source.take(18); textSize = 8.5f; setTextColor(TEXT_DIM)
+            text = "via ${stream.source}".take(20); textSize = 8.5f; setTextColor(TEXT_DIM)
             setPadding(dp(4), dp(1), dp(4), dp(1))
             background = roundRect(BG_BADGE, 3f)
         })
@@ -626,14 +732,13 @@ class DevToolsOverlay(
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // TAB 5: Headers — request + response headers for selected request
+    // TAB 5: Headers — request + response headers for selected request + JWT decoder
     // ═══════════════════════════════════════════════════════════════════════════
     private fun buildHeadersTab(): View {
         val outer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         }
-        val streams = detector.streams
         val reqs    = detector.requests.filter { it.headers.isNotEmpty() || it.responseHeaders.isNotEmpty() }
         val sv      = ScrollView(context).apply { overScrollMode = View.OVER_SCROLL_NEVER }
         val inner   = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(16)) }
@@ -651,10 +756,15 @@ class DevToolsOverlay(
         }
 
         // JWT Decoder
-        inner.addView(buildSectionHeader("JWT Decoder"))
-        val etJwt = buildEditText("Paste JWT token ở đây...")
-        val tvJwtResult = buildMonoTv("", TEXT_SEC, 9.5f)
+        inner.addView(buildSectionHeader("# JWT Decoder"))
+        val etJwt = buildEditText("Paste JWT token...")
         inner.addView(etJwt)
+        inner.addView(TextView(context).apply {
+            text = "Paste any JWT above to decode header + payload"
+            textSize = 9f; setTextColor(TEXT_DIM)
+            setPadding(0, dp(2), 0, dp(6))
+        })
+        val tvJwtResult = buildMonoTv("", TEXT_SEC, 9.5f)
         inner.addView(buildActionBtn("🔍 Decode", ACCENT) {
             val token = etJwt.text.toString().trim()
             val info  = JwtDecoder.decode(token)
@@ -677,13 +787,13 @@ class DevToolsOverlay(
         }
         card.addView(buildMonoTv(req.url.take(80), typeColor(req.tag), 9.5f))
         if (req.headers.isNotEmpty()) {
-            card.addView(buildSectionHeader("REQUEST"))
+            card.addView(buildSectionHeader("REQUEST HEADERS"))
             req.headers.entries.take(15).forEach { (k, v) ->
                 card.addView(buildMonoTv("$k: ${v.take(120)}", TEXT_SEC, 9f))
             }
         }
         if (req.responseHeaders.isNotEmpty()) {
-            card.addView(buildSectionHeader("RESPONSE · ${req.statusCode}"))
+            card.addView(buildSectionHeader("RESPONSE HEADERS · ${req.statusCode}"))
             req.responseHeaders.entries.take(10).forEach { (k, v) ->
                 card.addView(buildMonoTv("$k: ${v.take(120)}", TEXT_SEC, 9f))
             }
@@ -692,7 +802,7 @@ class DevToolsOverlay(
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // Other tabs — delegate to same logic as DevToolsSheet but with new styling
+    // Other tabs — delegate, same pattern as before
     // ═══════════════════════════════════════════════════════════════════════════
     private fun buildConsoleTab()  = buildConsoleView()
     private fun buildCryptoTab()   = buildCryptoView()
@@ -702,68 +812,123 @@ class DevToolsOverlay(
     private fun buildTimelineTab() = buildTimelineView()
     private fun buildProxyTab()    = buildProxyView()
 
-    // ── Console ────────────────────────────────────────────────────────────────
+    // ── TAB 2: Console — real activity log feed + JS REPL ───────────────────────
+    // The reference design shows lines like "WebWorker intercepted" / "Service Worker
+    // registered" / "PerformanceObserver: ..." — this app does NOT instrument those
+    // yet, so they are intentionally not faked here. Only genuinely-tracked events
+    // (stream found, crypto key captured, ws connected, HOOK_JS injected) are logged;
+    // see StreamDetector.addLog() call sites.
     private fun buildConsoleView(): View {
         val outer = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT) }
-        val log   = StringBuilder(detector.consoleLog)
-        val sv    = ScrollView(context).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f); overScrollMode = View.OVER_SCROLL_NEVER }
-        val tv    = buildMonoTv(log.toString(), TEXT_SEC, 9.5f).apply { setPadding(dp(12), dp(8), dp(12), dp(8)) }
-        sv.addView(tv); outer.addView(sv)
-        // Input row
+
+        val sv = ScrollView(context).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f); overScrollMode = View.OVER_SCROLL_NEVER }
+        val logCol = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10), dp(8), dp(10), dp(8)) }
+        val log = detector.activityLog
+        if (log.isEmpty()) {
+            logCol.addView(emptyState("Chưa có activity. Mở trang video để xem log hệ thống."))
+        } else {
+            log.asReversed().forEach { entry -> logCol.addView(buildLogLine(entry)) }
+        }
+        sv.addView(logCol); outer.addView(sv)
+        sv.post { sv.fullScroll(View.FOCUS_DOWN) }
+
+        // JS REPL — kept from the previous version (real execution against the page)
+        outer.addView(vDivider())
+        val replLog = StringBuilder(detector.consoleLog)
+        val replScroll = ScrollView(context).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(90))
+            overScrollMode = View.OVER_SCROLL_NEVER
+        }
+        val replTv = buildMonoTv(replLog.toString(), TEXT_SEC, 9f).apply { setPadding(dp(10), dp(4), dp(10), dp(4)) }
+        replScroll.addView(replTv); outer.addView(replScroll)
         val inputRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL; setBackgroundColor(BG_HEADER)
             setPadding(dp(8), dp(6), dp(8), dp(6))
         }
         val et = buildEditText("JavaScript...").apply { layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) }
-        val histBtn = buildActionBtn("⏫", BG_BADGE) {
-            if (consoleHistory.isNotEmpty()) et.setText(consoleHistory[0])
-        }
         val runBtn = buildActionBtn("▶ Run", ACCENT) {
             val code = et.text.toString()
             if (code.isBlank()) return@buildActionBtn
             consoleHistory.remove(code); consoleHistory.add(0, code); if (consoleHistory.size > 50) consoleHistory.removeLast()
-            log.append("\n▶ $code\n")
+            replLog.append("\n▶ $code\n")
             webView.evaluateJavascript(code) { res ->
-                log.append(res?.removeSurrounding("\"") ?: "null")
-                post { tv.text = log; sv.post { sv.fullScroll(View.FOCUS_DOWN) } }
+                replLog.append(res?.removeSurrounding("\"") ?: "null")
+                post { replTv.text = replLog; replScroll.post { replScroll.fullScroll(View.FOCUS_DOWN) } }
             }
+            et.setText("")
         }
-        inputRow.addView(et); inputRow.addView(histBtn); inputRow.addView(runBtn)
+        inputRow.addView(et); inputRow.addView(runBtn)
         outer.addView(inputRow)
         return outer
     }
 
-    // ── Crypto ─────────────────────────────────────────────────────────────────
+    private fun buildLogLine(entry: ActivityLogEntry): View {
+        val (icon, color) = when (entry.level) {
+            "success" -> "✓" to ACCENT
+            "warn"    -> "⚠" to C_M3U9
+            else      -> "›" to TEXT_SEC
+        }
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            if (entry.level == "warn") setBackgroundColor(C_WARN_BG)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(2) }
+            addView(TextView(context).apply {
+                text = icon; textSize = 10f; setTextColor(color)
+                layoutParams = LinearLayout.LayoutParams(dp(18), LinearLayout.LayoutParams.WRAP_CONTENT)
+            })
+            addView(buildMonoTv(entry.message, if (entry.level == "warn") color else TEXT_PRI, 9.5f).apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+        }
+    }
+
+    // ── TAB 3: Crypto — captured keys (color-coded by algorithm) + AES decrypt helper ──
     private fun buildCryptoView(): View {
         val sv    = ScrollView(context).apply { overScrollMode = View.OVER_SCROLL_NEVER }
         val inner = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(16)) }
         inner.addView(buildSectionHeader("Captured Keys (${detector.cryptoCount()})"))
         if (detector.cryptoKeys.isEmpty()) inner.addView(emptyState("Chưa có. Site cần dùng CryptoJS/SubtleCrypto."))
         detector.cryptoKeys.take(20).forEach { cap ->
+            val isSubtle = cap.algorithm.startsWith("SubtleCrypto")
+            val accent   = if (isSubtle) C_MP4 else C_M3U9
+            val cardBg   = if (isSubtle) C_BLUE_BG else C_WARN_BG
             val card = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL; setBackgroundColor(BG_CARD)
-                setBackgroundColor(BG_CARD); setPadding(dp(10), dp(8), dp(10), dp(8))
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(4) }
+                orientation = LinearLayout.VERTICAL; setBackgroundColor(cardBg)
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) }
             }
-            card.addView(typeBadge(cap.algorithm, C_JS))
-            card.addView(buildMonoTv("KEY: ${cap.key}", TEXT_PRI, 10f))
-            if (cap.iv.isNotBlank()) card.addView(buildMonoTv("IV:  ${cap.iv}", C_CSS, 10f))
-            val btnRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(4), 0, 0) }
-            btnRow.addView(buildActionBtn("Copy Key", ACCENT) { activity.copyToClipboard(cap.key, "Key copied") })
-            btnRow.addView(buildActionBtn("Decrypt ▶", C_DASH) { fillDecryptInput(cap.key, cap.iv) })
+            val titleRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            titleRow.addView(TextView(context).apply {
+                text = if (isSubtle) "🛡" else "🔑"; textSize = 13f
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6) }
+            })
+            titleRow.addView(TextView(context).apply { text = cap.algorithm; textSize = 12f; setTextColor(accent); typeface = Typeface.DEFAULT_BOLD })
+            card.addView(titleRow)
+            card.addView(kvLine("Key:", cap.key, accent))
+            if (cap.iv.isNotBlank()) card.addView(kvLine("IV:", cap.iv, accent))
+            card.addView(kvLine("Type:", "AES-128-CBC (hex32)", TEXT_SEC))
+            val btnRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(6), 0, 0) }
+            btnRow.addView(buildActionBtn("Copy Key", BG_BADGE) { activity.copyToClipboard(cap.key, "Key copied") })
+            btnRow.addView(buildActionBtn("Decrypt ▶", accent) { fillDecryptInput(cap.key, cap.iv) })
             card.addView(btnRow); inner.addView(card)
         }
-        // AES Decrypt helper
         inner.addView(vDivider())
-        inner.addView(buildSectionHeader("AES-CBC Decrypt"))
-        val etCipher = buildEditText("IV_HEX:CIPHERTEXT_HEX"); inner.addView(etCipher)
-        val etKey    = buildEditText("Key (string or hex)"); inner.addView(etKey)
+
+        // AES Decrypt Helper
+        inner.addView(buildSectionHeader("AES DECRYPT HELPER"))
+        val etKey    = buildEditText("Key (hex)"); inner.addView(etKey)
+        val etIv     = buildEditText("IV (hex)"); inner.addView(etIv)
+        val etCipher = buildEditText("Ciphertext (base64)"); inner.addView(etCipher)
         val tvResult = buildMonoTv("", TEXT_SEC, 9.5f)
         inner.addView(buildActionBtn("🔓 Decrypt", ACCENT) {
-            tvResult.text = aesDecrypt(etCipher.text.toString().trim(), etKey.text.toString().trim())
+            tvResult.text = aesDecryptHexIvB64Cipher(etKey.text.toString().trim(), etIv.text.toString().trim(), etCipher.text.toString().trim())
         })
-        decryptCipherInput = etCipher; decryptKeyInput = etKey
+        decryptKeyInput = etKey; decryptIvInput = etIv; decryptCipherInput = etCipher
         inner.addView(tvResult)
+
         // AES Key finder
         inner.addView(vDivider())
         inner.addView(buildSectionHeader("Find Keys in JS (${detector.requests.count{ it.url.endsWith(".js") || it.url.contains(".js?") }} files)"))
@@ -771,74 +936,129 @@ class DevToolsOverlay(
             val jsUrls = detector.requests.filter { it.url.endsWith(".js") || it.url.contains(".js?") }.map { it.url }.take(15)
             scope.launch {
                 val found = AesKeyFinder.scanJsFiles(jsUrls, webView.url ?: "")
-                post {
-                    inner.removeViewAt(inner.childCount - 1)
-                    if (found.isEmpty()) inner.addView(emptyState("Không tìm thấy trong ${jsUrls.size} files"))
-                    else found.take(10).forEach { k ->
-                        inner.addView(LinearLayout(context).apply {
-                            orientation = LinearLayout.VERTICAL; setBackgroundColor(BG_CARD)
-                            setBackgroundColor(BG_CARD); setPadding(dp(10),dp(6),dp(10),dp(6))
-                            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(3) }
-                            addView(buildMonoTv("[${k.keyType}] ${k.keyValue}", ACCENT, 10f))
-                            addView(buildMonoTv("…${k.context.take(80)}…", TEXT_DIM, 8.5f))
-                            addView(buildActionBtn("Copy Key", ACCENT) { activity.copyToClipboard(k.keyValue,"Copied") })
-                        })
-                    }
-                }
+                post { showFoundKeysInline(inner, found, jsUrls.size) }
             }
         })
         sv.addView(inner); return sv
     }
 
+    private fun kvLine(label: String, value: String, color: Int): View = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setPadding(0, dp(2), 0, dp(2))
+        addView(TextView(context).apply {
+            text = label; textSize = 9.5f; setTextColor(TEXT_SEC); typeface = Typeface.MONOSPACE
+            layoutParams = LinearLayout.LayoutParams(dp(28), LinearLayout.LayoutParams.WRAP_CONTENT)
+        })
+        addView(TextView(context).apply {
+            text = value; textSize = 9.5f; setTextColor(color); typeface = Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+    }
+
+    private fun showFoundKeysInline(container: LinearLayout, found: List<AesKeyFinder.FoundKey>, scannedCount: Int) {
+        if (found.isEmpty()) { container.addView(emptyState("Không tìm thấy trong $scannedCount files")); return }
+        found.take(10).forEach { k ->
+            container.addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL; setBackgroundColor(BG_CARD)
+                setPadding(dp(10),dp(6),dp(10),dp(6))
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(3) }
+                addView(buildMonoTv("[${k.keyType}] ${k.keyValue}", ACCENT, 10f))
+                addView(buildMonoTv("…${k.context.take(80)}…", TEXT_DIM, 8.5f))
+                addView(buildActionBtn("Copy Key", BG_BADGE) { activity.copyToClipboard(k.keyValue,"Copied") })
+            })
+        }
+    }
+
     private var decryptCipherInput: EditText? = null
     private var decryptKeyInput: EditText?    = null
+    private var decryptIvInput: EditText?     = null
     private fun fillDecryptInput(key: String, iv: String) {
         decryptKeyInput?.setText(key)
-        if (iv.isNotBlank()) decryptCipherInput?.setText("$iv:")
+        decryptIvInput?.setText(iv)
         showTab(3)
     }
 
-    // ── WebSocket ──────────────────────────────────────────────────────────────
+    private fun aesDecryptHexIvB64Cipher(keyHex: String, ivHex: String, cipherB64: String): String {
+        if (keyHex.isBlank() || ivHex.isBlank() || cipherB64.isBlank()) return "Cần nhập đủ Key, IV, Ciphertext"
+        return try {
+            val keyB = if (keyHex.length in listOf(32,48,64) && keyHex.all { it.isLetterOrDigit() })
+                hexToBytes(keyHex) else keyHex.toByteArray().let { when { it.size<=16->it.copyOf(16); it.size<=24->it.copyOf(24); else->it.copyOf(32) } }
+            val ivB = hexToBytes(ivHex)
+            val cipherBytes = android.util.Base64.decode(cipherB64, android.util.Base64.DEFAULT)
+            val cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, javax.crypto.spec.SecretKeySpec(keyB,"AES"), javax.crypto.spec.IvParameterSpec(ivB))
+            String(cipher.doFinal(cipherBytes), Charsets.UTF_8)
+        } catch (e: Exception) { "Error: ${e.message}" }
+    }
+
+    // ── TAB 4: WebSocket — connection header + SENT/RECV message list ───────────
     private fun buildWsView(): View {
         val sv    = ScrollView(context).apply { overScrollMode = View.OVER_SCROLL_NEVER }
         val inner = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(16)) }
         inner.addView(buildSectionHeader("WebSocket Messages (${detector.wsMessages.size})"))
         if (detector.wsMessages.isEmpty()) { inner.addView(emptyState("Chưa có WS. Mở trang dùng WebSocket.")); sv.addView(inner); return sv }
-        // Group by WS URL
         val grouped = detector.wsMessages.groupBy { it.wsUrl }
         grouped.forEach { (wsUrl, msgs) ->
             inner.addView(LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(8), dp(6), dp(8), dp(6)); setBackgroundColor(BG_HEADER)
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(2) }
-                addView(buildMonoTv(wsUrl.take(50), TEXT_PRI, 10f).apply { layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) })
-                addView(typeBadge("CONNECTED", ACCENT))
+                setBackgroundColor(BG_CARD); setPadding(dp(10), dp(8), dp(10), dp(8))
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6) }
+                addView(buildMonoTv(wsUrl, TEXT_PRI, 10.5f).apply { layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) })
+                addView(TextView(context).apply {
+                    text = "CONNECTED"; textSize = 8.5f; setTextColor(ACCENT)
+                    setPadding(dp(6), dp(2), dp(6), dp(2))
+                    background = roundRect(Color.parseColor("#0D2E1A"), 4f)
+                })
             })
-            msgs.take(30).forEach { msg ->
+            msgs.sortedBy { it.timestamp }.take(50).forEach { msg ->
                 val (dirColor, dirLabel) = when(msg.direction) {
-                    "send"  -> C_XHR to "SENT"
-                    "recv"  -> ACCENT to "RECV"
-                    "open"  -> C_CSS to "OPEN"
+                    "send"  -> C_MP4 to "SENT"
+                    "recv"  -> C_M3U9 to "RECV"
+                    "open"  -> ACCENT to "OPEN"
                     else    -> TEXT_DIM to "CLOSE"
                 }
+                val hasStreamHint = msg.data.contains("http") &&
+                    (msg.data.contains(".m3u8") || msg.data.contains("stream") || msg.data.contains(".mp4"))
                 inner.addView(LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL; gravity = Gravity.TOP
-                    setPadding(dp(8), dp(5), dp(8), dp(5))
+                    setPadding(dp(8), dp(7), dp(8), dp(7))
                     setBackgroundColor(BG_CARD2)
                     layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 1 }
-                    addView(typeBadge(dirLabel, dirColor).apply { layoutParams = LinearLayout.LayoutParams(dp(44), LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(8) } })
-                    val msgTv = buildMonoTv(msg.data.take(200), TEXT_SEC, 9.5f).apply {
+                    addView(TextView(context).apply {
+                        text = dirLabel; textSize = 8.5f; setTextColor(Color.BLACK)
+                        setBackgroundColor(dirColor)
+                        setPadding(dp(4), dp(1), dp(4), dp(1))
+                        gravity = Gravity.CENTER
+                        layoutParams = LinearLayout.LayoutParams(dp(40), LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(8) }
+                    })
+                    val msgCol = LinearLayout(context).apply {
+                        orientation = LinearLayout.VERTICAL
                         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                        setOnClickListener { activity.copyToClipboard(msg.data, "WS data copied") }
                     }
-                    addView(msgTv)
+                    msgCol.addView(buildMonoTv(msg.data.take(220), TEXT_PRI, 9.5f).apply {
+                        setOnClickListener { activity.copyToClipboard(msg.data, "WS data copied") }
+                    })
+                    msgCol.addView(LinearLayout(context).apply {
+                        orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                        if (hasStreamHint) addView(TextView(context).apply {
+                            text = "▶"; textSize = 9f; setTextColor(ACCENT)
+                            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+                                LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(4) }
+                        })
+                        addView(TextView(context).apply {
+                            text = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(msg.timestamp))
+                            textSize = 8f; setTextColor(TEXT_DIM)
+                        })
+                    })
+                    addView(msgCol)
                 })
             }
         }
         sv.addView(inner); return sv
     }
 
-    // ── Storage, CSS, Timeline, Proxy — stub wrappers calling WebView ─────────
+    // ── Storage, CSS, Timeline, Proxy — unchanged (no design reference provided) ──
     private fun buildStorageView(): View {
         val sv = ScrollView(context).apply { overScrollMode = View.OVER_SCROLL_NEVER }
         val inner = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(16)) }
@@ -981,7 +1201,8 @@ class DevToolsOverlay(
 
     // ── Helpers ────────────────────────────────────────────────────────────────
     private fun typeColor(tag: String) = when (tag) {
-        "HLS","M3U8","M3U9" -> C_HLS
+        "HLS","M3U8"        -> C_HLS
+        "M3U9"              -> C_M3U9
         "DASH"              -> C_DASH
         "MP4","WEBM","FLV"  -> C_MP4
         "XHR"               -> C_XHR
@@ -995,6 +1216,7 @@ class DevToolsOverlay(
     private fun streamTypeColor(type: StreamType) = when (type) {
         StreamType.HLS  -> C_HLS
         StreamType.DASH -> C_DASH
+        StreamType.M3U9 -> C_M3U9
         else            -> C_MP4
     }
 
@@ -1014,14 +1236,6 @@ class DevToolsOverlay(
         return android.graphics.drawable.GradientDrawable().apply {
             setColor(color)
             cornerRadius = cornerDp * dp
-        }
-    }
-
-    private fun leftBorder(borderColor: Int, bgColor: Int): android.graphics.drawable.GradientDrawable {
-        return android.graphics.drawable.GradientDrawable().apply {
-            setColor(bgColor)
-            // Left border via stroke on left side not directly supported
-            // We use a simple background and handle left stripe separately
         }
     }
 
@@ -1076,19 +1290,6 @@ class DevToolsOverlay(
 
     private fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
 
-    private fun aesDecrypt(input: String, keyInput: String): String {
-        val parts = input.trim().split(":")
-        if (parts.size < 2) return "Format: IV_HEX:CIPHERTEXT_HEX"
-        return try {
-            val ivHex  = parts[0]; val cipherHex = parts.drop(1).joinToString("")
-            val keyB   = if (keyInput.length in listOf(32,48,64) && keyInput.all { it.isLetterOrDigit() })
-                hexToBytes(keyInput) else keyInput.toByteArray().let { when { it.size<=16->it.copyOf(16); it.size<=24->it.copyOf(24); else->it.copyOf(32) } }
-            val cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding")
-            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, javax.crypto.spec.SecretKeySpec(keyB,"AES"), javax.crypto.spec.IvParameterSpec(hexToBytes(ivHex)))
-            String(cipher.doFinal(hexToBytes(cipherHex)), Charsets.UTF_8)
-        } catch (e: Exception) { "Error: ${e.message}" }
-    }
-
     private fun hexToBytes(h: String): ByteArray {
         val c = h.replace(":","").replace(" ","")
         return ByteArray(c.length/2) { i -> c.substring(i*2,i*2+2).toInt(16).toByte() }
@@ -1139,14 +1340,17 @@ class DevToolsOverlay(
     // ── Show / Hide ────────────────────────────────────────────────────────────
     fun show() {
         visibility = View.VISIBLE
-        ObjectAnimator.ofFloat(getChildAt(1), "translationX", getChildAt(1).width.toFloat(), 0f)
-            .apply { duration = 280; interpolator = android.view.animation.DecelerateInterpolator(); start() }
+        // FIX: post{} ensures panelView has gone through a layout pass (so .width is
+        // accurate) before reading it — first-time show used to read width=0.
+        panelView.post {
+            ObjectAnimator.ofFloat(panelView, "translationX", panelView.width.toFloat(), 0f)
+                .apply { duration = 280; interpolator = android.view.animation.DecelerateInterpolator(); start() }
+        }
         refresh()
     }
 
     fun hide() {
-        val panel = getChildAt(1) ?: return
-        ObjectAnimator.ofFloat(panel, "translationX", 0f, panel.width.toFloat())
+        ObjectAnimator.ofFloat(panelView, "translationX", 0f, panelView.width.toFloat())
             .apply {
                 duration = 220; interpolator = android.view.animation.AccelerateInterpolator()
                 addListener(object : android.animation.AnimatorListenerAdapter() {

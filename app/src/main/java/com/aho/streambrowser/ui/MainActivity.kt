@@ -413,17 +413,27 @@ class MainActivity : AppCompatActivity() {
 
     private var devToolsOverlay: DevToolsOverlay? = null
 
+    // FIX (crash on DevTools tap): wrapped in try/catch as a safety net. Without a
+    // logcat/stack trace from the device we could not confirm a single root-cause
+    // exception line (see chat answer for the concrete layout bug we DID find and
+    // fixed in DevToolsOverlay.kt). This ensures that *whatever* throws here from
+    // now on surfaces as a Toast instead of taking down the whole app.
     private fun openDevTools() {
-        if (devToolsOverlay == null) {
-            devToolsOverlay = DevToolsOverlay(this, detector, b.webView, this) { playStream(it) }
-            val root = window.decorView as android.widget.FrameLayout
-            root.addView(devToolsOverlay, android.widget.FrameLayout.LayoutParams(
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-            ))
-            devToolsOverlay?.visibility = android.view.View.GONE
+        try {
+            if (devToolsOverlay == null) {
+                devToolsOverlay = DevToolsOverlay(this, detector, b.webView, this) { playStream(it) }
+                val root = window.decorView as android.widget.FrameLayout
+                root.addView(devToolsOverlay, android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                ))
+                devToolsOverlay?.visibility = android.view.View.GONE
+            }
+            devToolsOverlay?.show()
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "openDevTools crashed", e)
+            Toast.makeText(this, "DevTools lỗi: ${e.message}", Toast.LENGTH_LONG).show()
         }
-        devToolsOverlay?.show()
     }
 
     private fun playStream(item: StreamItem) {

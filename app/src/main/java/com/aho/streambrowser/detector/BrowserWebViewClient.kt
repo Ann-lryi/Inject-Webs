@@ -37,6 +37,9 @@ class BrowserWebViewClient(
     private val activeRequests = AtomicInteger(0)
     private val MAX_CONCURRENT = 8
 
+    // Activity-log: "JS Bridge ready" only needs to be logged once per app session
+    private var bridgeReadyLogged = false
+
     private val okHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
@@ -101,6 +104,11 @@ class BrowserWebViewClient(
                     lastInjectTime = System.currentTimeMillis()
                     injectedUrls.add(currentUrl)
                     if (injectedUrls.size > 20) injectedUrls.remove(injectedUrls.iterator().next())
+                    if (!bridgeReadyLogged) {
+                        bridgeReadyLogged = true
+                        detector.addLog("info", "StreamBrowser — JS Bridge ready", "system")
+                    }
+                    detector.addLog("success", "HOOK_JS injected successfully", "inject")
                 }
             }
         } catch (_: Exception) {}
