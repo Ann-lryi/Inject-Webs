@@ -45,6 +45,7 @@ class StreamAdapter(
                 StreamType.DASH     -> Color.parseColor("#4A148C") to Color.parseColor("#E1BEE7")
                 StreamType.FLV      -> Color.parseColor("#BF360C") to Color.parseColor("#FFCCBC")
                 StreamType.WEBM     -> Color.parseColor("#006064") to Color.parseColor("#B2EBF2")
+                StreamType.M3U9     -> Color.parseColor("#7B5800") to Color.parseColor("#FFECB3")
                 StreamType.WEBSOCKET -> Color.parseColor("#E65100") to Color.parseColor("#FFE0B2")
                 StreamType.RTMP     -> Color.parseColor("#880E4F") to Color.parseColor("#F8BBD0")
                 StreamType.OTHER    -> Color.parseColor("#37474F") to Color.parseColor("#ECEFF1")
