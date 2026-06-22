@@ -63,6 +63,14 @@ class DevToolsOverlay(
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val dp get() = context.resources.displayMetrics.density
 
+    // FIX (real crash root cause): TABS used to be declared further down the file,
+    // AFTER the `init` block below. Kotlin runs property initializers in textual
+    // order — init{} called setupOverlay() -> buildTabStrip() -> TABS.forEachIndexed{}
+    // while TABS itself hadn't been assigned yet, so it was still null at that point
+    // => "Attempt to invoke interface method ... iterator() on a null object
+    // reference" on EVERY DevTools open. Moving it above `init` fixes this for good.
+    private val TABS = listOf("Network","Streams","Console","Crypto","WS","Headers","Storage","CSS","Timeline","Proxy")
+
     private lateinit var panelView: LinearLayout
     private lateinit var tabStrip: LinearLayout
     private lateinit var contentArea: FrameLayout
@@ -197,8 +205,6 @@ class DevToolsOverlay(
     }
 
     // ── Tab strip ─────────────────────────────────────────────────────────────
-    private val TABS = listOf("Network","Streams","Console","Crypto","WS","Headers","Storage","CSS","Timeline","Proxy")
-
     private fun buildTabStrip(): LinearLayout {
         val scroll = HorizontalScrollView(context).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
