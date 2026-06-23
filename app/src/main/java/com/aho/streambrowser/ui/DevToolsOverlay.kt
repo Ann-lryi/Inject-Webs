@@ -80,6 +80,11 @@ class DevToolsOverlay(
     private var streamGroupByType = false
     private var snapshotUrls: Set<String> = emptySet()
     private val consoleHistory = mutableListOf<String>()
+    private var consoleLevelFilter = "All"
+    // Bottom-sheet drag state
+    private var dragStartRawY   = 0f
+    private var dragStartTransY = 0f
+    private val defaultTopFraction = 0.36f   // panel top at 36% → 64% visible
 
     init {
         setBackgroundColor(Color.TRANSPARENT)
@@ -88,7 +93,7 @@ class DevToolsOverlay(
 
     // ── Setup ─────────────────────────────────────────────────────────────────
     private fun setupOverlay() {
-        // Backdrop (tap to close) — stays full-size and in place; only the panel slides
+        // Backdrop — full screen dim layer, tap anywhere above panel to dismiss
         val backdrop = View(context).apply {
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
             setBackgroundColor(Color.parseColor("#88000000"))
@@ -96,21 +101,21 @@ class DevToolsOverlay(
         }
         addView(backdrop)
 
-        // Panel (88% width from right, 94% height, centered vertically)
-        val panelW = (screenWidth * 0.88f).toInt()
+        // Bottom-sheet panel — full width, anchored at bottom
+        // translationY=0 means visible at defaultTopFraction from top.
+        // translationY=panelVisibleH means fully off-screen below.
         panelView = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(BG_PANEL)
-            layoutParams = LayoutParams(panelW, (screenHeight * 0.94f).toInt()).apply {
-                gravity  = Gravity.END or Gravity.CENTER_VERTICAL
-                rightMargin = 0
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT).apply {
+                topMargin = (screenHeight * defaultTopFraction).toInt()
             }
-            // FIX: this used to be set on the outer DevToolsOverlay (`this`), which also
-            // wraps the backdrop — that pushed the WHOLE overlay (dim + panel) off-screen
-            // permanently, since show()'s animator only ever reset the panel, never the
-            // parent. Setting it on the panel itself is what lets it slide in correctly.
-            translationX = panelW.toFloat()
+            // Start off screen below (will animate up on show())
+            translationY = (screenHeight * (1f - defaultTopFraction))
         }
+
+        // Drag handle — tap/drag to resize or close
+        panelView.addView(buildDragHandle())
 
         // Header
         panelView.addView(buildHeader())
@@ -134,6 +139,58 @@ class DevToolsOverlay(
         addView(panelView)
 
         showTab(0)
+    }
+
+    // ── Drag handle ───────────────────────────────────────────────────────────
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun buildDragHandle(): View {
+        val handle = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity     = Gravity.CENTER_HORIZONTAL
+            setBackgroundColor(BG_HEADER)
+            setPadding(0, dp(8), 0, dp(8))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(30))
+        }
+        // The visible pill
+        handle.addView(View(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(44), dp(4)).also {
+                it.gravity = Gravity.CENTER_HORIZONTAL
+            }
+            background = roundRect(Color.parseColor("#555555"), 2f)
+        })
+        handle.setOnTouchListener { _, event ->
+            val panelH = screenHeight * (1f - defaultTopFraction)
+            when (event.action) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    dragStartRawY   = event.rawY
+                    dragStartTransY = panelView.translationY
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val delta = event.rawY - dragStartRawY
+                    // Allow expanding up (negative translationY) to ~95% screen,
+                    // and shrinking down to just before dismiss threshold.
+                    panelView.translationY = (dragStartTransY + delta)
+                        .coerceIn(-panelH * 0.55f, panelH * 0.85f)
+                }
+                android.view.MotionEvent.ACTION_UP,
+                android.view.MotionEvent.ACTION_CANCEL -> {
+                    if (panelView.translationY > panelH * 0.40f) {
+                        // Dragged too far down → dismiss
+                        hide()
+                    } else {
+                        // Snap back to resting position (translationY = 0)
+                        ObjectAnimator.ofFloat(panelView, "translationY", panelView.translationY, 0f)
+                            .apply {
+                                duration = 200
+                                interpolator = android.view.animation.DecelerateInterpolator()
+                                start()
+                            }
+                    }
+                }
+            }
+            true
+        }
+        return handle
     }
 
     private val screenWidth  get() = context.resources.displayMetrics.widthPixels
@@ -818,27 +875,50 @@ class DevToolsOverlay(
     private fun buildTimelineTab() = buildTimelineView()
     private fun buildProxyTab()    = buildProxyView()
 
-    // ── TAB 2: Console — real activity log feed + JS REPL ───────────────────────
-    // The reference design shows lines like "WebWorker intercepted" / "Service Worker
-    // registered" / "PerformanceObserver: ..." — this app does NOT instrument those
-    // yet, so they are intentionally not faked here. Only genuinely-tracked events
-    // (stream found, crypto key captured, ws connected, HOOK_JS injected) are logged;
-    // see StreamDetector.addLog() call sites.
+    // ── TAB 2: Console — filter chips + real activity log + JS REPL ────────────
     private fun buildConsoleView(): View {
         val outer = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT) }
 
-        val sv = ScrollView(context).apply { layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f); overScrollMode = View.OVER_SCROLL_NEVER }
+        // ── Filter chips: All | Info | Success | Warn | Error ────────────────
+        val chipRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(BG_HEADER)
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+        }
+        listOf("All" to TEXT_SEC, "Info" to TEXT_SEC, "Success" to ACCENT,
+               "Warn" to C_M3U9, "Error" to Color.parseColor("#EF4444")).forEach { (level, col) ->
+            val isActive = level == consoleLevelFilter
+            chipRow.addView(TextView(context).apply {
+                text = level; textSize = 10f
+                setPadding(dp(8), dp(3), dp(8), dp(3))
+                background = roundRect(if (isActive) col else BG_BADGE, 10f)
+                setTextColor(if (isActive) Color.WHITE else TEXT_SEC)
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(4) }
+                setOnClickListener { consoleLevelFilter = level; showTab(2) }
+            })
+        }
+        outer.addView(chipRow)
+
+        // ── Activity log ─────────────────────────────────────────────────────
+        val sv = ScrollView(context).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+            overScrollMode = View.OVER_SCROLL_NEVER
+        }
         val logCol = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10), dp(8), dp(10), dp(8)) }
-        val log = detector.activityLog
-        if (log.isEmpty()) {
-            logCol.addView(emptyState("Chưa có activity. Mở trang video để xem log hệ thống."))
+        val filteredLog = detector.activityLog.filter { e ->
+            consoleLevelFilter == "All" || e.level.equals(consoleLevelFilter, ignoreCase = true)
+        }
+        if (filteredLog.isEmpty()) {
+            logCol.addView(emptyState(if (consoleLevelFilter == "All")
+                "Chưa có activity. Mở trang video để xem log." else "Không có mục ${consoleLevelFilter}."))
         } else {
-            log.asReversed().forEach { entry -> logCol.addView(buildLogLine(entry)) }
+            filteredLog.asReversed().forEach { entry -> logCol.addView(buildLogLine(entry)) }
         }
         sv.addView(logCol); outer.addView(sv)
         sv.post { sv.fullScroll(View.FOCUS_DOWN) }
 
-        // JS REPL — kept from the previous version (real execution against the page)
+        // ── JS REPL ──────────────────────────────────────────────────────────
         outer.addView(vDivider())
         val replLog = StringBuilder(detector.consoleLog)
         val replScroll = ScrollView(context).apply {
@@ -869,24 +949,40 @@ class DevToolsOverlay(
     }
 
     private fun buildLogLine(entry: ActivityLogEntry): View {
-        val (icon, color) = when (entry.level) {
+        val (icon, iconColor) = when (entry.level) {
             "success" -> "✓" to ACCENT
             "warn"    -> "⚠" to C_M3U9
+            "error"   -> "✕" to Color.parseColor("#EF4444")
             else      -> "›" to TEXT_SEC
+        }
+        val rowBg = when (entry.level) {
+            "warn"  -> C_WARN_BG
+            "error" -> Color.parseColor("#2A0D0D")
+            else    -> Color.TRANSPARENT
         }
         return LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-            if (entry.level == "warn") setBackgroundColor(C_WARN_BG)
+            gravity     = Gravity.CENTER_VERTICAL
+            setPadding(dp(6), dp(5), dp(6), dp(5))
+            if (rowBg != Color.TRANSPARENT) setBackgroundColor(rowBg)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(2) }
+            // Icon
             addView(TextView(context).apply {
-                text = icon; textSize = 10f; setTextColor(color)
-                layoutParams = LinearLayout.LayoutParams(dp(18), LinearLayout.LayoutParams.WRAP_CONTENT)
+                text = icon; textSize = 11f; setTextColor(iconColor)
+                layoutParams = LinearLayout.LayoutParams(dp(20), LinearLayout.LayoutParams.WRAP_CONTENT)
             })
-            addView(buildMonoTv(entry.message, if (entry.level == "warn") color else TEXT_PRI, 9.5f).apply {
+            // Message (flex)
+            addView(buildMonoTv(entry.message, if (entry.level == "warn" || entry.level == "error") iconColor else TEXT_PRI, 9.5f).apply {
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             })
+            // Source tag on right
+            if (entry.source.isNotBlank()) {
+                addView(TextView(context).apply {
+                    text = entry.source.take(6); textSize = 8f; setTextColor(TEXT_DIM)
+                    setPadding(dp(4), 0, 0, 0)
+                })
+            }
         }
     }
 
@@ -1345,25 +1441,29 @@ class DevToolsOverlay(
 
     // ── Show / Hide ────────────────────────────────────────────────────────────
     fun show() {
-        visibility = View.VISIBLE
-        // FIX: post{} ensures panelView has gone through a layout pass (so .width is
-        // accurate) before reading it — first-time show used to read width=0.
-        panelView.post {
-            ObjectAnimator.ofFloat(panelView, "translationX", panelView.width.toFloat(), 0f)
-                .apply { duration = 280; interpolator = android.view.animation.DecelerateInterpolator(); start() }
-        }
+        this@DevToolsOverlay.visibility = View.VISIBLE
+        val panelH = screenHeight * (1f - defaultTopFraction)
+        // Ensure we start from below screen regardless of last drag position
+        panelView.translationY = panelH
+        ObjectAnimator.ofFloat(panelView, "translationY", panelH, 0f)
+            .apply { duration = 300; interpolator = android.view.animation.DecelerateInterpolator(); start() }
         refresh()
     }
 
     fun hide() {
-        ObjectAnimator.ofFloat(panelView, "translationX", 0f, panelView.width.toFloat())
+        val panelH = screenHeight * (1f - defaultTopFraction)
+        val startY = panelView.translationY
+        ObjectAnimator.ofFloat(panelView, "translationY", startY, panelH)
             .apply {
-                duration = 220; interpolator = android.view.animation.AccelerateInterpolator()
+                duration = 240
+                interpolator = android.view.animation.AccelerateInterpolator()
                 addListener(object : android.animation.AnimatorListenerAdapter() {
                     override fun onAnimationEnd(animation: android.animation.Animator) {
-                        visibility = View.GONE
+                        this@DevToolsOverlay.visibility = View.GONE
+                        panelView.translationY = 0f   // reset for next show()
                     }
-                }); start()
+                })
+                start()
             }
     }
 
