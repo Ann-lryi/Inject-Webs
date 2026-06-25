@@ -62,7 +62,7 @@ class StreamJsBridge(
         )
         detector.addCryptoKey(capture)
     }
-}
+
     @JavascriptInterface
     fun onCryptoKey(algorithm: String, key: String, iv: String) {
         if (key.isBlank()) return
