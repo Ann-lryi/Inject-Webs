@@ -1037,7 +1037,7 @@ class DevToolsOverlay(
         inner.addView(buildActionBtn("🔍 Scan JS Files", C_JS) {
             val jsUrls = detector.requests.filter { it.url.endsWith(".js") || it.url.contains(".js?") }.map { it.url }.take(15)
             scope.launch {
-                val found = AesKeyFinder.scanJsFiles(jsUrls, webView.url ?: "")
+                val found: List<Any> = emptyList() // Bỏ qua quét JS nặng nề
                 post { showFoundKeysInline(inner, found, jsUrls.size) }
             }
         })
@@ -1058,18 +1058,8 @@ class DevToolsOverlay(
         })
     }
 
-    private fun showFoundKeysInline(container: LinearLayout, found: List<AesKeyFinder.FoundKey>, scannedCount: Int) {
-        if (found.isEmpty()) { container.addView(emptyState("Không tìm thấy trong $scannedCount files")); return }
-        found.take(10).forEach { k ->
-            container.addView(LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL; setBackgroundColor(BG_CARD)
-                setPadding(dp(10),dp(6),dp(10),dp(6))
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(3) }
-                addView(buildMonoTv("[${k.keyType}] ${k.keyValue}", ACCENT, 10f))
-                addView(buildMonoTv("…${k.context.take(80)}…", TEXT_DIM, 8.5f))
-                addView(buildActionBtn("Copy Key", BG_BADGE) { activity.copyToClipboard(k.keyValue,"Copied") })
-            })
-        }
+    private fun showFoundKeysInline(container: LinearLayout, found: Any?, scannedCount: Int) {
+        container.addView(emptyState("Tính năng quét JS tĩnh đã bị vô hiệu hóa."))
     }
 
     private var decryptCipherInput: EditText? = null

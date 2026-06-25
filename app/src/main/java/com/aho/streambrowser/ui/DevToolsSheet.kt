@@ -1168,7 +1168,7 @@ class DevToolsSheet(
                     it.url.endsWith(".js") || it.url.contains(".js?")
                 }.map { it.url }.take(15)
                 scope.launch {
-                    val found = AesKeyFinder.scanJsFiles(jsUrls, webView.url ?: "")
+                    val found: List<Any> = emptyList() // Disabled
                     post {
                         text = "Scan JS Files for Keys"
                         if (found.isEmpty()) {
@@ -1799,27 +1799,13 @@ class DevToolsSheet(
     }
 
     // ── C1: Found keys dialog ─────────────────────────────────────────────────
-    private fun showFoundKeysDialog(found: List<AesKeyFinder.FoundKey>) {
+    private fun showFoundKeysDialog(found: List<Any>) {
         val ctx = requireContext()
         val inner = col(ctx).apply { setPadding(12.dp, 8.dp, 12.dp, 16.dp) }
         val sv = android.widget.ScrollView(ctx)
         sv.addView(inner)
-        inner.addView(sectionHeader(ctx, "${found.size} potential keys found"))
-        found.forEach { key ->
-            val card = col(ctx, "#1A2A1A").apply {
-                setPadding(8.dp, 6.dp, 8.dp, 6.dp)
-                layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = 6.dp }
-            }
-            card.addView(tv(ctx, "[${key.keyType}] ${key.keyValue}", "#4CAF50", 11f).apply {
-                typeface = android.graphics.Typeface.MONOSPACE; setTextIsSelectable(true)
-            })
-            card.addView(tv(ctx, "…${key.context.take(100)}…", "#888", 9f))
-            card.addView(tv(ctx, key.jsUrl.substringAfterLast("/").take(50), "#555", 9f))
-            card.addView(btn(ctx, "Copy Key", "#1A2A1A", "#4CAF50").apply {
-                setOnClickListener { copy(key.keyValue) }
-            })
-            inner.addView(card)
-        }
+        inner.addView(sectionHeader(ctx, "Scan Disabled"))
+        inner.addView(tv(ctx, "Tính năng quét Regex đã được thay thế bằng WebCrypto Hooking tự động.", "#888", 12f))
         AlertDialog.Builder(ctx).setTitle("🔍 AES Keys Found")
             .setView(sv).setNegativeButton("Đóng", null).show()
     }
