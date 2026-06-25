@@ -1,92 +1,63 @@
 package com.aho.streambrowser.util
 
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.util.concurrent.TimeUnit
+import android.util.Log
 
-/** C1: Find AES keys in loaded JavaScript files */
+/** C1: Kẻ cướp khóa AES tại trận (God-Mode API Hooking)
+ * ĐÃ ĐẬP BỎ THUẬT TOÁN REGEX CŨ.
+ * Lớp này giờ chỉ chứa Payload Javascript để tiêm vào WebView.
+ */
 object AesKeyFinder {
 
-    data class FoundKey(
-        val jsUrl:     String,
-        val keyValue:  String,
-        val keyType:   String,   // "hex32", "hex48", "hex64", "string", "base64"
-        val context:   String    // surrounding code
-    )
-
-    private val client by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(6, TimeUnit.SECONDS)
-            .readTimeout(6, TimeUnit.SECONDS)
-            .build()
-    }
-
-    // Patterns for common AES key presentations
-    private val KEY_PATTERNS = listOf(
-        // 32-char hex (AES-128 key)
-        Regex("""["'`]([0-9a-fA-F]{32})["'`]"""),
-        // 48-char hex (AES-192 key)
-        Regex("""["'`]([0-9a-fA-F]{48})["'`]"""),
-        // 64-char hex (AES-256 key)
-        Regex("""["'`]([0-9a-fA-F]{64})["'`]"""),
-        // Variable named key/secret/pass
-        Regex("""(?:key|secret|pass(?:word)?|aes|cipher)\s*[=:]\s*["'`]([^"'`\s]{8,64})["'`]""", RegexOption.IGNORE_CASE),
-        // CryptoJS.enc.Utf8.parse("...")
-        Regex("""Utf8\.parse\(["'`]([^"'`]{8,64})["'`]\)"""),
-        // Base64 keys (32+ chars, ends with =)
-        Regex("""["'`]([A-Za-z0-9+/]{24,}={0,2})["'`]""")
-    )
-
-    private val KEY_TYPE = mapOf(32 to "hex32", 48 to "hex48", 64 to "hex64")
-
-    suspend fun scanJsFiles(jsUrls: List<String>, referer: String): List<FoundKey> {
-        val found = mutableListOf<FoundKey>()
-        jsUrls.take(15).forEach { url ->
-            try {
-                val resp = client.newCall(
-                    Request.Builder().url(url)
-                        .addHeader("Referer", referer)
-                        .addHeader("User-Agent", "Mozilla/5.0")
-                        .build()
-                ).execute().use { it.body?.string() ?: "" }
-
-                if (resp.length < 5_000_000) {  // skip huge files
-                    found.addAll(scanContent(resp, url))
-                }
-            } catch (_: Exception) {}
-        }
-        return found.distinctBy { it.keyValue }
-    }
-
-    private fun scanContent(js: String, sourceUrl: String): List<FoundKey> {
-        val results = mutableListOf<FoundKey>()
-        KEY_PATTERNS.forEach { pattern ->
-            pattern.findAll(js).take(10).forEach { match ->
-                val value  = match.groupValues[1]
-                if (isLikelyKey(value)) {
-                    val start   = (match.range.first - 40).coerceAtLeast(0)
-                    val end     = (match.range.last  + 40).coerceAtMost(js.length)
-                    val context = js.substring(start, end).replace('\n', ' ').trim()
-                    val type = KEY_TYPE[value.length] ?: when {
-                        value.matches(Regex("[0-9a-fA-F]+")) -> "hex${value.length}"
-                        value.endsWith("=")                  -> "base64"
-                        else                                 -> "string"
-                    }
-                    results.add(FoundKey(sourceUrl, value, type, context))
-                }
+    // Đây là Payload tàn bạo nhất: Nó ghi đè (Override) thẳng vào hàm giải mã gốc của trình duyệt
+    val cryptoHookPayload = """
+        (function() {
+            if (window.__cryptoHooked) return;
+            window.__cryptoHooked = true;
+            
+            // 1. Hook vào WebCrypto API (SubtleCrypto)
+            if (window.crypto && window.crypto.subtle) {
+                const originalDecrypt = window.crypto.subtle.decrypt;
+                window.crypto.subtle.decrypt = async function(algorithm, key, data) {
+                    try {
+                        // Trích xuất Key Material thô từ bộ nhớ trình duyệt
+                        const exportedKey = await window.crypto.subtle.exportKey("raw", key);
+                        const keyHex = Array.from(new Uint8Array(exportedKey)).map(b => b.toString(16).padStart(2, '0')).join('');
+                        
+                        let ivHex = "";
+                        if (algorithm.iv) {
+                            ivHex = Array.from(new Uint8Array(algorithm.iv)).map(b => b.toString(16).padStart(2, '0')).join('');
+                        }
+                        
+                        // Báo cáo về cho Kotlin qua Bridge
+                        if (window.streamBridge) {
+                            window.streamBridge.onCryptoKeyIntercepted(algorithm.name || "AES", keyHex, ivHex);
+                        }
+                    } catch(e) { /* Bỏ qua lỗi để không làm sập web */ }
+                    
+                    // Trả lại luồng giải mã nguyên thủy để video vẫn chạy bình thường
+                    return originalDecrypt.apply(this, arguments);
+                };
             }
-        }
-        return results
-    }
-
-    private fun isLikelyKey(value: String): Boolean {
-        if (value.length < 8) return false
-        // Skip obvious non-keys: URLs, common strings, all same char
-        if (value.contains("://")) return false
-        if (value.all { it == value[0] }) return false
-        // Skip very common JS strings
-        val skipList = listOf("undefined","function","prototype","constructor","innerHTML")
-        if (value in skipList) return false
-        return true
-    }
+            
+            // 2. Hook vào CryptoJS (Rất nhiều web lậu dùng thư viện cũ này)
+            let checkCryptoJS = setInterval(function() {
+                if (window.CryptoJS && window.CryptoJS.AES && !window.__cryptoJsHooked) {
+                    window.__cryptoJsHooked = true;
+                    const originalAesDecrypt = window.CryptoJS.AES.decrypt;
+                    
+                    window.CryptoJS.AES.decrypt = function(ciphertext, key, cfg) {
+                        try {
+                            const keyHex = key.toString(window.CryptoJS.enc.Hex);
+                            let ivHex = cfg && cfg.iv ? cfg.iv.toString(window.CryptoJS.enc.Hex) : "";
+                            if (window.streamBridge) {
+                                window.streamBridge.onCryptoKeyIntercepted("CryptoJS-AES", keyHex, ivHex);
+                            }
+                        } catch(e) { }
+                        return originalAesDecrypt.apply(this, arguments);
+                    };
+                    clearInterval(checkCryptoJS);
+                }
+            }, 500); // Quét mỗi nửa giây xem Web có tải CryptoJS không
+        })();
+    """.trimIndent()
 }

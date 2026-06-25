@@ -1,33 +1,68 @@
 package com.aho.streambrowser.detector
 
 import android.webkit.JavascriptInterface
+import android.util.Log
 
 class StreamJsBridge(
     private val detector:       StreamDetector,
     private val getCurrentUrl:  () -> String
 ) {
+    // BỘ LỌC CHỐNG XSS & INJECTION
+    private fun sanitizeInput(input: String): String {
+        // Chỉ cho phép các ký tự an toàn. Drop các thẻ Script/HTML
+        if (input.contains("<script>") || input.contains("javascript:")) return "BLOCKED_XSS"
+        return input.replace(Regex("[<>\"']"), "")
+    }
+
+    private fun isValidUrl(url: String): Boolean {
+        return url.startsWith("http://") || url.startsWith("https://") || url.startsWith("ws://") || url.startsWith("wss://") || url.startsWith("blob:")
+    }
+
     @JavascriptInterface
     fun onRequest(url: String, source: String, method: String) {
-        detector.reportFromJs(url, source, method, getCurrentUrl())
+        val sUrl = sanitizeInput(url)
+        if (!isValidUrl(sUrl)) return
+        detector.reportFromJs(sUrl, sanitizeInput(source), sanitizeInput(method), getCurrentUrl())
     }
 
     /** B4: WebSocket event capture */
     @JavascriptInterface
     fun onWebSocket(direction: String, wsUrl: String, data: String) {
-        detector.addWebSocketMessage(WebSocketMessage(direction, wsUrl, data))
-        // Also scan WS data for stream URLs
-        if (direction == "recv" && data.isNotBlank()) {
-            detector.scanTextForStreams(data, "ws_recv:$wsUrl", getCurrentUrl())
+        val sWsUrl = sanitizeInput(wsUrl)
+        if (!isValidUrl(sWsUrl)) return
+        
+        val sData = sanitizeInput(data)
+        detector.addWebSocketMessage(WebSocketMessage(sanitizeInput(direction), sWsUrl, sData))
+        
+        if (direction == "recv" && sData.isNotBlank()) {
+            detector.scanTextForStreams(sData, "ws_recv:$sWsUrl", getCurrentUrl())
         }
     }
 
     /** E1+E2: SPA navigation detected (history.pushState / popstate) */
     @JavascriptInterface
     fun onSpaNavigation(url: String) {
-        detector.onSpaNavigate(url)
+        detector.onSpaNavigate(sanitizeInput(url))
     }
 
-    /** Crypto key captured (CryptoJS / SubtleCrypto) */
+    /** CỰC KHỦNG: Crypto API Hooking Capture (SubtleCrypto / CryptoJS) */
+    @JavascriptInterface
+    fun onCryptoKeyIntercepted(algo: String, hexKey: String, hexIv: String) {
+        val safeAlgo = sanitizeInput(algo)
+        val safeKey = sanitizeInput(hexKey)
+        val safeIv = sanitizeInput(hexIv)
+        
+        Log.w("GOD_MODE_BRIDGE", "BẮT QUẢ TANG AES KEY TRỰC TIẾP TỪ RAM TRÌNH DUYỆT! Algo: $safeAlgo | Key: $safeKey")
+        
+        val capture = CryptoKeyCapture(
+            algorithm = safeAlgo,
+            key = safeKey,
+            iv = safeIv,
+            pageUrl = getCurrentUrl()
+        )
+        detector.addCryptoKey(capture)
+    }
+}
     @JavascriptInterface
     fun onCryptoKey(algorithm: String, key: String, iv: String) {
         if (key.isBlank()) return
