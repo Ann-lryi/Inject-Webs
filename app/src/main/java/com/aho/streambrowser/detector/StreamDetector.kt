@@ -705,11 +705,21 @@ class StreamDetector(private val context: Context? = null) {
         val hdrs   = request.requestHeaders ?: emptyMap()
         if (isNoise(url)) return
         val streamType = StreamItem.detectType(url)
+        val isSub = url.lowercase().endsWith(".vtt") || url.lowercase().endsWith(".srt") || url.lowercase().endsWith(".ass")
+        
         val req = NetworkRequest(url=url, method=method, headers=hdrs, pageUrl=pageUrl,
                                  isStream=streamType!=null, streamType=streamType)
+                                 
+        // B5: Tự động trích xuất Token/JWT từ mọi Request đi qua
+        com.aho.streambrowser.feature.devtools.token.TokenAutoExtractor.inspectRequest(req)
+        
         addRequest(req)
         if (streamType != null)
             addStream(StreamItem(url=url, type=streamType, source="network", referer=pageUrl))
+        if (isSub) {
+            // A4: Quét Phụ Đề
+            addLog("INFO", "Phát hiện Phụ đề: ${url.substringAfterLast("/")}", "A4_SUBTITLE")
+        }
     }
 
     fun reportFromJs(url: String, source: String, method: String, referer: String) {

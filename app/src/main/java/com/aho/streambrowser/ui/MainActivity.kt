@@ -111,6 +111,14 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread { updateFab() }
         }
         detector.onRequestAdded = { runOnUiThread { updateFab() } }
+
+        // Bắt sự kiện bấm vào nút Floating Badge mới (Tính năng H1)
+        b.btnStreamBadge.setOnClickListener {
+            val bottomSheet = StreamBottomSheet()
+            bottomSheet.show(supportFragmentManager, "streams")
+            // Ẩn chấm đỏ sau khi đã bấm xem
+            b.indicatorNew.visibility = View.GONE
+        }
     }
 
     private fun setupBackHandler() {
@@ -341,10 +349,33 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateFab() {
-        val s = detector.streamCount(); val r = detector.requestCount()
-        when { s>0 -> { b.btnDevTools.text="● $s Stream"; b.btnDevTools.extend() }
-               r>0 -> { b.btnDevTools.text="DevTools ($r)"; b.btnDevTools.shrink() }
-               else -> { b.btnDevTools.text="DevTools"; b.btnDevTools.shrink() } }
+        val s = detector.streamCount()
+        val r = detector.requestCount()
+        val tokens = com.aho.streambrowser.feature.devtools.token.TokenAutoExtractor.getAllTokens().size
+
+        // Logic cũ cho nút DevTools
+        when { 
+            s>0 -> { b.btnDevTools.text="● $s Stream"; b.btnDevTools.extend() }
+            r>0 -> { b.btnDevTools.text="DevTools ($r)"; b.btnDevTools.shrink() }
+            else -> { b.btnDevTools.text="DevTools"; b.btnDevTools.shrink() } 
+        }
+
+        // Logic mới cho Floating Badge (Tính năng H1)
+        if (s > 0 || tokens > 0) {
+            b.btnStreamBadge.visibility = View.VISIBLE
+            val badgeText = mutableListOf<String>()
+            if (s > 0) badgeText.add("▶ $s Streams")
+            if (tokens > 0) badgeText.add("🔑 $tokens Tokens")
+            
+            b.tvStreamBadgeCount.text = badgeText.joinToString(" | ")
+            
+            // Bật chấm đỏ (Red Indicator) nếu có dữ liệu mới
+            if (b.indicatorNew.visibility == View.GONE) {
+                b.indicatorNew.visibility = View.VISIBLE
+            }
+        } else {
+            b.btnStreamBadge.visibility = View.GONE
+        }
     }
 
     // ── Extras ────────────────────────────────────────────────────────────────

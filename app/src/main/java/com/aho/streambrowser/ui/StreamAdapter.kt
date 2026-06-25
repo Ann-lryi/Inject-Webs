@@ -55,6 +55,20 @@ class StreamAdapter(
             b.btnCopy.setOnClickListener  { onCopy(item)  }
             b.btnPlay.setOnClickListener  { onPlay(item)  }
             b.btnShare.setOnClickListener { onShare(item) }
+            
+            // Tích hợp Nút Tải
+            b.btnDownload.setOnClickListener {
+                if (item.type == com.aho.streambrowser.model.StreamType.HLS) {
+                    android.widget.Toast.makeText(b.root.context, "Bắt đầu tải M3U8 đa luồng...", android.widget.Toast.LENGTH_SHORT).show()
+                    com.aho.streambrowser.feature.downloader.hls.HlsDownloader.startDownload(
+                        b.root.context, 
+                        item, 
+                        "Downloaded_Video_${System.currentTimeMillis()}"
+                    )
+                } else {
+                    android.widget.Toast.makeText(b.root.context, "Tính năng tải hiện chỉ hỗ trợ định dạng HLS (.m3u8)", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 
