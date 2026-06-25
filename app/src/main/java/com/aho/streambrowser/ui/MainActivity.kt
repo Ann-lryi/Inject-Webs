@@ -16,6 +16,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.util.Rational
 import android.view.KeyEvent
+import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.CookieManager
@@ -114,7 +115,10 @@ class MainActivity : AppCompatActivity() {
 
         // Bắt sự kiện bấm vào nút Floating Badge mới (Tính năng H1)
         b.btnStreamBadge.setOnClickListener {
-            val bottomSheet = StreamBottomSheet()
+            val streams = detector.streams
+            val bottomSheet = StreamBottomSheet(streams) { stream ->
+                playVideo(stream)
+            }
             bottomSheet.show(supportFragmentManager, "streams")
             // Ẩn chấm đỏ sau khi đã bấm xem
             b.indicatorNew.visibility = View.GONE
