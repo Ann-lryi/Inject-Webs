@@ -117,7 +117,7 @@ class MainActivity : AppCompatActivity() {
         b.btnStreamBadge.setOnClickListener {
             val streams = detector.streams
             val bottomSheet = StreamBottomSheet(streams) { stream ->
-                playVideo(stream)
+                playStream(stream)
             }
             bottomSheet.show(supportFragmentManager, "streams")
             // Ẩn chấm đỏ sau khi đã bấm xem
