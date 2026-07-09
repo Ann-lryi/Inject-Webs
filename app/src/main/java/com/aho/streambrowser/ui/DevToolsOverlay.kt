@@ -183,17 +183,29 @@ class DevToolsOverlay(
                 }
                 android.view.MotionEvent.ACTION_UP,
                 android.view.MotionEvent.ACTION_CANCEL -> {
-                    if (panelView.translationY > panelH * 0.40f) {
-                        // Dragged too far down → dismiss
-                        hide()
-                    } else {
-                        // Snap back to resting position (translationY = 0)
-                        ObjectAnimator.ofFloat(panelView, "translationY", panelView.translationY, 0f)
-                            .apply {
-                                duration = 200
-                                interpolator = android.view.animation.DecelerateInterpolator()
-                                start()
-                            }
+                    when {
+                        panelView.translationY > panelH * 0.40f -> {
+                            // Dragged too far down → dismiss
+                            hide()
+                        }
+                        panelView.translationY < -panelH * 0.30f -> {
+                            // Dragged far enough up → snap to an expanded height (was a dead gesture before)
+                            ObjectAnimator.ofFloat(panelView, "translationY", panelView.translationY, -panelH * 0.42f)
+                                .apply {
+                                    duration = 200
+                                    interpolator = android.view.animation.DecelerateInterpolator()
+                                    start()
+                                }
+                        }
+                        else -> {
+                            // Snap back to resting position (translationY = 0)
+                            ObjectAnimator.ofFloat(panelView, "translationY", panelView.translationY, 0f)
+                                .apply {
+                                    duration = 200
+                                    interpolator = android.view.animation.DecelerateInterpolator()
+                                    start()
+                                }
+                        }
                     }
                 }
             }
@@ -309,7 +321,7 @@ class DevToolsOverlay(
         return TextView(context).apply {
             text = label; textSize = 11f
             setTextColor(if (idx == currentTab) ACCENT else TEXT_SEC)
-            setPadding(dp(14), dp(10), dp(14), dp(8))
+            setPadding(dp(14), dp(12), dp(14), dp(10))
             background = if (idx == currentTab) bottomBorder(ACCENT) else null
             setOnClickListener { currentTab = idx; showTab(idx) }
         }
@@ -371,7 +383,7 @@ class DevToolsOverlay(
         filters.forEach { f ->
             val btn = TextView(context).apply {
                 text = f; textSize = 10f
-                setPadding(dp(8), dp(3), dp(8), dp(3))
+                setPadding(dp(8), dp(6), dp(8), dp(6))
                 background = roundRect(if (f == networkFilter) ACCENT else BG_BADGE, 10f)
                 setTextColor(if (f == networkFilter) Color.BLACK else TEXT_SEC)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -497,6 +509,8 @@ class DevToolsOverlay(
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 1 }
             setOnClickListener { showRequestDetail(req) }
+            // Long-press: instant copy URL, skips the detail dialog. Short-press unchanged.
+            setOnLongClickListener { activity.copyToClipboard(req.url, "URL copied"); true }
         }
         // 3dp colored left strip — native stand-in for the design's colored row border
         row.addView(View(context).apply {
@@ -517,8 +531,8 @@ class DevToolsOverlay(
         })
         // Method
         content.addView(TextView(context).apply {
-            text = req.method; textSize = 9f; setTextColor(TEXT_SEC)
-            layoutParams = LinearLayout.LayoutParams(dp(38), LinearLayout.LayoutParams.WRAP_CONTENT)
+            text = req.method; textSize = 9.5f; setTextColor(TEXT_SEC); maxLines = 1
+            layoutParams = LinearLayout.LayoutParams(dp(40), LinearLayout.LayoutParams.WRAP_CONTENT)
         })
         // Host + path
         val hostCol = LinearLayout(context).apply {
@@ -527,11 +541,11 @@ class DevToolsOverlay(
             setPadding(dp(4), 0, dp(4), 0)
         }
         hostCol.addView(TextView(context).apply {
-            text = req.host.take(24); textSize = 10f; setTextColor(TEXT_PRI)
+            text = req.host.take(24); textSize = 10.5f; setTextColor(TEXT_PRI)
             maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
         })
         hostCol.addView(TextView(context).apply {
-            text = req.path.take(30); textSize = 8.5f; setTextColor(TEXT_SEC)
+            text = req.path.take(30); textSize = 9f; setTextColor(TEXT_SEC)
             maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
         })
         content.addView(hostCol)
@@ -544,13 +558,13 @@ class DevToolsOverlay(
         }
         content.addView(TextView(context).apply {
             text = if (req.statusCode > 0) req.statusCode.toString() else "…"
-            textSize = 9f; setTextColor(statusColor)
+            textSize = 9.5f; setTextColor(statusColor); maxLines = 1
             layoutParams = LinearLayout.LayoutParams(dp(32), LinearLayout.LayoutParams.WRAP_CONTENT)
             gravity = Gravity.CENTER
         })
         // Type badge
         content.addView(TextView(context).apply {
-            text = req.tag; textSize = 7.5f; setTextColor(Color.BLACK)
+            text = req.tag; textSize = 8.5f; setTextColor(Color.BLACK); maxLines = 1
             setBackgroundColor(typeCol)
             setPadding(dp(3), dp(1), dp(3), dp(1))
             layoutParams = LinearLayout.LayoutParams(dp(38), LinearLayout.LayoutParams.WRAP_CONTENT)
@@ -564,8 +578,8 @@ class DevToolsOverlay(
             else -> "${req.responseBodyPreview.length/1024}K"
         }
         content.addView(TextView(context).apply {
-            text = sizeStr; textSize = 8.5f; setTextColor(TEXT_SEC)
-            layoutParams = LinearLayout.LayoutParams(dp(38), LinearLayout.LayoutParams.WRAP_CONTENT)
+            text = sizeStr; textSize = 9f; setTextColor(TEXT_SEC); maxLines = 1
+            layoutParams = LinearLayout.LayoutParams(dp(42), LinearLayout.LayoutParams.WRAP_CONTENT)
             gravity = Gravity.END
         })
         // Waterfall bar
@@ -836,7 +850,10 @@ class DevToolsOverlay(
 
         // JWT Decoder
         inner.addView(buildSectionHeader("# JWT Decoder"))
-        val etJwt = buildEditText("Paste JWT token...")
+        val etJwt = buildEditText("Paste JWT token...").apply {
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+        }
         inner.addView(etJwt)
         inner.addView(TextView(context).apply {
             text = "Paste any JWT above to decode header + payload"
@@ -844,13 +861,17 @@ class DevToolsOverlay(
             setPadding(0, dp(2), 0, dp(6))
         })
         val tvJwtResult = buildMonoTv("", TEXT_SEC, 9.5f)
-        inner.addView(buildActionBtn("🔍 Decode", ACCENT) {
+        val decodeBtn = buildActionBtn("🔍 Decode", ACCENT) {
             val token = etJwt.text.toString().trim()
             val info  = JwtDecoder.decode(token)
             tvJwtResult.text = if (info != null) {
                 "Header:\n${info.header}\n\nPayload:\n${info.payload}\n\nExp: ${info.expTime} ${if (info.isExpired) "⚠ EXPIRED" else "✓"}"
             } else "Invalid JWT"
-        })
+        }
+        etJwt.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) { decodeBtn.performClick(); true } else false
+        }
+        inner.addView(decodeBtn)
         inner.addView(tvJwtResult)
         sv.addView(inner); outer.addView(sv)
         return outer
@@ -914,7 +935,7 @@ class DevToolsOverlay(
             val isActive = level == consoleLevelFilter
             chipRow.addView(TextView(context).apply {
                 text = level; textSize = 10f
-                setPadding(dp(8), dp(3), dp(8), dp(3))
+                setPadding(dp(8), dp(6), dp(8), dp(6))
                 background = roundRect(if (isActive) col else BG_BADGE, 10f)
                 setTextColor(if (isActive) Color.WHITE else TEXT_SEC)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -955,7 +976,12 @@ class DevToolsOverlay(
             orientation = LinearLayout.HORIZONTAL; setBackgroundColor(BG_HEADER)
             setPadding(dp(8), dp(6), dp(8), dp(6))
         }
-        val et = buildEditText("JavaScript...").apply { layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f) }
+        val et = buildEditText("JavaScript...").apply {
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+            typeface = Typeface.MONOSPACE
+        }
         val runBtn = buildActionBtn("▶ Run", ACCENT) {
             val code = et.text.toString()
             if (code.isBlank()) return@buildActionBtn
@@ -966,6 +992,9 @@ class DevToolsOverlay(
                 post { replTv.text = replLog; replScroll.post { replScroll.fullScroll(View.FOCUS_DOWN) } }
             }
             et.setText("")
+        }
+        et.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) { runBtn.performClick(); true } else false
         }
         inputRow.addView(et); inputRow.addView(runBtn)
         outer.addView(inputRow)
@@ -1047,9 +1076,9 @@ class DevToolsOverlay(
 
         // AES Decrypt Helper
         inner.addView(buildSectionHeader("AES DECRYPT HELPER"))
-        val etKey    = buildEditText("Key (hex)"); inner.addView(etKey)
-        val etIv     = buildEditText("IV (hex)"); inner.addView(etIv)
-        val etCipher = buildEditText("Ciphertext (base64)"); inner.addView(etCipher)
+        val etKey    = buildEditText("Key (hex)").apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS; typeface = Typeface.MONOSPACE }; inner.addView(etKey)
+        val etIv     = buildEditText("IV (hex)").apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS; typeface = Typeface.MONOSPACE }; inner.addView(etIv)
+        val etCipher = buildEditText("Ciphertext (base64)").apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS; typeface = Typeface.MONOSPACE }; inner.addView(etCipher)
         val tvResult = buildMonoTv("", TEXT_SEC, 9.5f)
         inner.addView(buildActionBtn("🔓 Decrypt", ACCENT) {
             tvResult.text = aesDecryptHexIvB64Cipher(etKey.text.toString().trim(), etIv.text.toString().trim(), etCipher.text.toString().trim())
@@ -1210,7 +1239,11 @@ class DevToolsOverlay(
         val sv = ScrollView(context).apply { overScrollMode = View.OVER_SCROLL_NEVER }
         val inner = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(16)) }
         inner.addView(buildSectionHeader("🎨 CSS Injector"))
-        val et = buildEditText("/* CSS here */\nbody { background: #000 !important; }").apply { minLines = 5 }
+        val et = buildEditText("/* CSS here */\nbody { background: #000 !important; }").apply {
+            minLines = 5
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            typeface = Typeface.MONOSPACE
+        }
         inner.addView(et)
         val btnRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
         btnRow.addView(buildActionBtn("▶ Inject", ACCENT) {
@@ -1246,6 +1279,7 @@ class DevToolsOverlay(
                 setPadding(dp(4), dp(6), dp(4), dp(6))
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 1 }
                 setOnClickListener { showRequestDetail(req) }
+                setOnLongClickListener { activity.copyToClipboard(req.url, "URL copied"); true }
             }
             row.addView(typeBadge(req.tag, typeColor(req.tag)).apply { layoutParams = LinearLayout.LayoutParams(dp(40), dp(16)) })
             row.addView(buildWaterfallBar(rel, 0.06f, typeColor(req.tag)).apply { layoutParams = LinearLayout.LayoutParams(0, dp(12), 1f) })
@@ -1261,7 +1295,10 @@ class DevToolsOverlay(
         inner.addView(buildSectionHeader("🌐 HTTP Proxy"))
         val curH = System.getProperty("http.proxyHost") ?: ""; val curP = System.getProperty("http.proxyPort") ?: ""
         inner.addView(buildMonoTv(if (curH.isNotBlank()) "Proxy ON: $curH:$curP" else "Proxy: OFF", if (curH.isNotBlank()) ACCENT else TEXT_DIM, 11f).apply { setPadding(0,0,0,dp(8)) })
-        val etHost = buildEditText("Proxy host (vd: 192.168.1.100)").apply { setText(curH) }
+        val etHost = buildEditText("Proxy host (vd: 192.168.1.100)").apply {
+            setText(curH)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        }
         val etPort = buildEditText("Port (vd: 8888)").apply {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER; setText(curP)
         }
@@ -1384,9 +1421,9 @@ class DevToolsOverlay(
     }
 
     private fun buildEditText(hint: String) = EditText(context).apply {
-        this.hint = hint; textSize = 11f; setTextColor(TEXT_PRI)
+        this.hint = hint; textSize = 13f; setTextColor(TEXT_PRI)
         setHintTextColor(TEXT_DIM); background = roundRect(BG_CARD, 6f)
-        setPadding(dp(10), dp(8), dp(10), dp(8))
+        setPadding(dp(10), dp(11), dp(10), dp(11))
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6) }
     }
 
