@@ -75,6 +75,7 @@ class DevToolsOverlay(
     private lateinit var tabStrip: LinearLayout
     private lateinit var contentArea: FrameLayout
     private lateinit var tvLive: TextView
+    private lateinit var tvCounts: TextView
     private var currentTab = 0
     private var networkFilter = "All"
     private var streamGroupByType = false
@@ -106,6 +107,14 @@ class DevToolsOverlay(
         // translationY=panelVisibleH means fully off-screen below.
         panelView = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
+            // FIX (touch leak): panel had no isClickable, so a tap on any dead zone
+            // inside it (padding, unlabeled text, gaps between rows) fell through to
+            // the full-screen `backdrop` sibling below and silently triggered hide().
+            // The NEXT tap then landed straight on the WebView. Making the panel
+            // itself clickable absorbs those dead-zone taps instead of leaking them.
+            // Does not affect any child listeners — Android always tries children first.
+            isClickable = true
+            isFocusable = true
             setBackgroundColor(BG_PANEL)
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT).apply {
                 topMargin = (screenHeight * defaultTopFraction).toInt()
@@ -234,7 +243,7 @@ class DevToolsOverlay(
             layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
         }
         // Counts
-        val tvCounts = TextView(context).apply {
+        tvCounts = TextView(context).apply {
             text = "Str: ${detector.streamCount()} | Req: ${detector.requestCount()}"
             textSize = 9f; setTextColor(TEXT_SEC)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -316,12 +325,18 @@ class DevToolsOverlay(
         }
     }
 
-    fun refresh() { refreshTabStrip(); showTab(currentTab) }
+    fun refresh() {
+        tvCounts.text = "Str: ${detector.streamCount()} | Req: ${detector.requestCount()}"
+        refreshTabStrip()
+        showTab(currentTab)
+    }
 
     // ── Show tab ──────────────────────────────────────────────────────────────
     private fun showTab(idx: Int) {
         currentTab = idx
         refreshTabStrip()
+        contentArea.animate().cancel()
+        contentArea.alpha = 0f
         contentArea.removeAllViews()
         when (idx) {
             0  -> contentArea.addView(buildNetworkTab())
@@ -335,6 +350,7 @@ class DevToolsOverlay(
             8  -> contentArea.addView(buildTimelineTab())
             9  -> contentArea.addView(buildProxyTab())
         }
+        contentArea.animate().alpha(1f).setDuration(120).start()
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -848,7 +864,7 @@ class DevToolsOverlay(
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(4) }
         }
-        card.addView(buildMonoTv(req.url.take(80), typeColor(req.tag), 9.5f))
+        card.addView(buildMonoTv(req.url.take(80), typeColor(req.tag), 9.5f).apply { setTextIsSelectable(true) })
         if (req.headers.isNotEmpty()) {
             card.addView(buildSectionHeader("REQUEST HEADERS"))
             req.headers.entries.take(15).forEach { (k, v) ->
@@ -861,6 +877,14 @@ class DevToolsOverlay(
                 card.addView(buildMonoTv("$k: ${v.take(120)}", TEXT_SEC, 9f))
             }
         }
+        card.addView(buildActionBtn("📋 Copy headers", ACCENT) {
+            val full = buildString {
+                appendLine(req.url)
+                if (req.headers.isNotEmpty()) { appendLine("\nREQUEST HEADERS"); req.headers.forEach { (k, v) -> appendLine("$k: $v") } }
+                if (req.responseHeaders.isNotEmpty()) { appendLine("\nRESPONSE HEADERS · ${req.statusCode}"); req.responseHeaders.forEach { (k, v) -> appendLine("$k: $v") } }
+            }
+            activity.copyToClipboard(full, "Headers copied")
+        })
         return card
     }
 
@@ -925,7 +949,7 @@ class DevToolsOverlay(
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(90))
             overScrollMode = View.OVER_SCROLL_NEVER
         }
-        val replTv = buildMonoTv(replLog.toString(), TEXT_SEC, 9f).apply { setPadding(dp(10), dp(4), dp(10), dp(4)) }
+        val replTv = buildMonoTv(replLog.toString(), TEXT_SEC, 9f).apply { setPadding(dp(10), dp(4), dp(10), dp(4)); setTextIsSelectable(true) }
         replScroll.addView(replTv); outer.addView(replScroll)
         val inputRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL; setBackgroundColor(BG_HEADER)
@@ -967,6 +991,8 @@ class DevToolsOverlay(
             if (rowBg != Color.TRANSPARENT) setBackgroundColor(rowBg)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(2) }
+            // Tap row to copy the log message (same pattern as WS-message copy)
+            setOnClickListener { activity.copyToClipboard(entry.message, "Log copied") }
             // Icon
             addView(TextView(context).apply {
                 text = icon; textSize = 11f; setTextColor(iconColor)
@@ -1155,9 +1181,11 @@ class DevToolsOverlay(
         val sv = ScrollView(context).apply { overScrollMode = View.OVER_SCROLL_NEVER }
         val inner = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(16)) }
         inner.addView(buildSectionHeader("localStorage + sessionStorage"))
-        val tvRes = buildMonoTv("Đang đọc...", TEXT_SEC, 9.5f); inner.addView(tvRes)
+        val tvRes = buildMonoTv("Đang đọc...", TEXT_SEC, 9.5f).apply { setTextIsSelectable(true) }; inner.addView(tvRes)
+        var fullStorageJson = ""
         webView.evaluateJavascript("""(function(){try{var ls={},ss={};for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);ls[k]=localStorage.getItem(k);}for(var i=0;i<sessionStorage.length;i++){var k=sessionStorage.key(i);ss[k]=sessionStorage.getItem(k);}return JSON.stringify({l:ls,s:ss});}catch(e){return '{"error":"'+e+'"}';}})()""") { raw ->
             val clean = raw?.removeSurrounding("\"")?.replace("\\\"","\"") ?: "{}"
+            fullStorageJson = clean
             post { try {
                 val j = org.json.JSONObject(clean); val sb = StringBuilder()
                 sb.appendLine("=== localStorage ===")
@@ -1167,6 +1195,10 @@ class DevToolsOverlay(
                 tvRes.text = sb
             } catch(_:Exception){tvRes.text=clean} }
         }
+        inner.addView(buildActionBtn("📋 Copy full JSON", ACCENT) {
+            if (fullStorageJson.isNotBlank()) activity.copyToClipboard(fullStorageJson, "Storage JSON copied (${fullStorageJson.length} chars)")
+            else toast("Chưa đọc xong, thử lại sau")
+        })
         inner.addView(buildActionBtn("🗑 Clear localStorage", Color.parseColor("#EF4444")) {
             webView.evaluateJavascript("localStorage.clear();void 0", null)
             toast("localStorage cleared")
@@ -1211,7 +1243,7 @@ class DevToolsOverlay(
             val rel = (req.timestamp - t0).toFloat() / tRange
             val row = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(4), dp(3), dp(4), dp(3))
+                setPadding(dp(4), dp(6), dp(4), dp(6))
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 1 }
                 setOnClickListener { showRequestDetail(req) }
             }
