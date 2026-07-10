@@ -1326,6 +1326,10 @@ class DevToolsOverlay(
             inner.addView(buildSectionHeader("REQUEST HEADERS"))
             req.headers.entries.forEach { (k,v) -> inner.addView(buildMonoTv("$k: ${v.take(200)}", TEXT_SEC, 9f)) }
         }
+        if (req.requestBody.isNotBlank()) {
+            inner.addView(buildSectionHeader("REQUEST BODY"))
+            inner.addView(buildMonoTv(req.requestBody.take(3000), TEXT_SEC, 9f).apply { setTextIsSelectable(true) })
+        }
         if (req.responseHeaders.isNotEmpty()) {
             inner.addView(buildSectionHeader("RESPONSE HEADERS · ${req.statusCode}"))
             req.responseHeaders.entries.forEach { (k,v) -> inner.addView(buildMonoTv("$k: ${v.take(200)}", TEXT_SEC, 9f)) }

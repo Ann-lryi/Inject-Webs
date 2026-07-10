@@ -167,6 +167,13 @@ val HOOK_JS = """
         XHR.prototype.send = function(body) {
             var xhr = this;
             report(xhr.__sb_url, 'xhr', xhr.__sb_method || 'GET');
+            // Fix: forward the request body/headers we already captured — was discarded before
+            try {
+                if (body || (xhr.__sb_headers && Object.keys(xhr.__sb_headers).length)) {
+                    var reqBodyStr = typeof body === 'string' ? body.substring(0, 4000) : (body ? '[non-text body]' : '');
+                    SBridge.onRequestPayload(xhr.__sb_url || '', JSON.stringify(xhr.__sb_headers || {}), reqBodyStr);
+                }
+            } catch(e) {}
             var origCb = xhr.onreadystatechange;
             xhr.onreadystatechange = function() {
                 if (xhr.readyState === 4) {
@@ -176,8 +183,12 @@ val HOOK_JS = """
                         if (resp && resp.length < 300000) {
                             // Detect encrypted hex response (IV:CIPHERTEXT pattern — e.g. x.mimix.cc)
                             var trimmed = resp.trim();
-                            if (/^[0-9a-fA-F]{32}:[0-9a-fA-F]{64,}$/.test(trimmed)) {
-                                try { SBridge.onResponseBody(xhr.__sb_url || '', xhr.status, ct, trimmed); } catch(e) {}
+                            var isEncHex = /^[0-9a-fA-F]{32}:[0-9a-fA-F]{64,}$/.test(trimmed);
+                            // Fix: was ONLY the hex:hex pattern above — general JSON API responses
+                            // (by far the most common "get stream URL" shape) were never captured.
+                            var isJsonLike = ct.match(/json/i) || trimmed.charAt(0) === '{' || trimmed.charAt(0) === '[';
+                            if (isEncHex || isJsonLike) {
+                                try { SBridge.onResponseBody(xhr.__sb_url || '', xhr.status, ct, trimmed.substring(0, 50000)); } catch(e) {}
                             }
                             // Scan for stream URLs
                             if (ct.match(/javascript|json|mpegURL|dash\+xml|text\/html/i)) {
@@ -204,12 +215,33 @@ val HOOK_JS = """
             var url = typeof input === 'string' ? input : (input && input.url);
             var method = (init && init.method) || (input && input.method) || 'GET';
             if (url) report(url, 'fetch', method);
+            // Fix: forward request body/headers — fetch() has this in `init`, was never sent
+            try {
+                if (url && init && (init.body || init.headers)) {
+                    var reqBodyStr = typeof init.body === 'string' ? init.body.substring(0, 4000) : (init.body ? '[non-text body]' : '');
+                    var hdrs = {};
+                    if (init.headers) {
+                        try { if (init.headers.forEach) init.headers.forEach(function(v, k) { hdrs[k] = v; }); else hdrs = init.headers; } catch(e) {}
+                    }
+                    SBridge.onRequestPayload(url, JSON.stringify(hdrs), reqBodyStr);
+                }
+            } catch(e) {}
             var prom = oFetch.apply(this, arguments);
             prom.then(function(r) {
                 try {
                     var ct = r.headers.get('Content-Type') || '';
                     if (ct.match(/mpegurl|dash\+xml|javascript|json|text\/html/i)) {
-                        r.clone().text().then(function(t) { if (t && t.length < 300000) extractUrls(t, 'fetch_resp'); }).catch(function(){});
+                        r.clone().text().then(function(t) {
+                            if (t && t.length < 300000) {
+                                extractUrls(t, 'fetch_resp');
+                                // Fix: fetch never captured response bodies before — only XHR did
+                                var trimmed = t.trim();
+                                var isJsonLike = ct.match(/json/i) || trimmed.charAt(0) === '{' || trimmed.charAt(0) === '[';
+                                if (isJsonLike) {
+                                    try { SBridge.onResponseBody(url || '', r.status, ct, trimmed.substring(0, 50000)); } catch(e) {}
+                                }
+                            }
+                        }).catch(function(){});
                     }
                 } catch(e) {}
             }).catch(function(){});
@@ -506,6 +538,10 @@ val HOOK_JS = """
             nodes.forEach(function(n) {
                 var src = n.src || n.getAttribute('src') || n.getAttribute('data-src') || n.getAttribute('data-hls');
                 if (src && src.startsWith('http')) report(src, 'mutation_' + n.tagName.toLowerCase(), 'GET');
+                if (n.tagName === 'IFRAME') {
+                    tryHookIframe(n);
+                    n.addEventListener('load', function() { tryHookIframe(n); });
+                }
             });
             batch = [];
         }
@@ -544,6 +580,103 @@ val HOOK_JS = """
         __sb.hooks.push(function() { Element.prototype.attachShadow = oAS; });
     })();
 
+    // ── Same-origin iframe hooking ──────────────────────────────────────────────
+    // Injection only ever ran in the main frame: onPageStarted/onPageFinished (native side)
+    // don't fire for subframe navigations, so embed-iframe players (common on VN streaming
+    // sites) were invisible to the XHR/fetch hooks even though their raw resource requests
+    // still showed up via native shouldInterceptRequest. Cross-origin iframes throw on
+    // .document access (same-origin policy) — that case is expected and silently skipped;
+    // there is no way around that from injected JS, same as in a normal desktop browser.
+    function hookXhrFetchOn(win, tag) {
+        try {
+            if (!win || win.__sb_frame_hooked) return;
+            win.__sb_frame_hooked = true;
+            if (win.XMLHttpRequest) {
+                var FXHR = win.XMLHttpRequest;
+                var fOpen = FXHR.prototype.open, fSend = FXHR.prototype.send, fSetHdr = FXHR.prototype.setRequestHeader;
+                FXHR.prototype.open = function(m, url) { this.__sb_url = url; this.__sb_method = m; return fOpen.apply(this, arguments); };
+                FXHR.prototype.setRequestHeader = function(n, v) {
+                    if (!this.__sb_headers) this.__sb_headers = {};
+                    this.__sb_headers[n.toLowerCase()] = v;
+                    return fSetHdr.apply(this, arguments);
+                };
+                FXHR.prototype.send = function(body) {
+                    var xhr = this;
+                    report(xhr.__sb_url, tag + '_xhr', xhr.__sb_method || 'GET');
+                    try {
+                        if (body || (xhr.__sb_headers && Object.keys(xhr.__sb_headers).length)) {
+                            var bodyStr = typeof body === 'string' ? body.substring(0, 4000) : (body ? '[non-text body]' : '');
+                            SBridge.onRequestPayload(xhr.__sb_url || '', JSON.stringify(xhr.__sb_headers || {}), bodyStr);
+                        }
+                    } catch(e) {}
+                    var origCb = xhr.onreadystatechange;
+                    xhr.onreadystatechange = function() {
+                        if (xhr.readyState === 4) {
+                            try {
+                                var ct = xhr.getResponseHeader('Content-Type') || '';
+                                var resp = xhr.responseText;
+                                if (resp && resp.length < 300000) {
+                                    var trimmed = resp.trim();
+                                    var isJsonLike = ct.match(/json/i) || trimmed.charAt(0) === '{' || trimmed.charAt(0) === '[';
+                                    if (isJsonLike) { try { SBridge.onResponseBody(xhr.__sb_url || '', xhr.status, ct, trimmed.substring(0, 50000)); } catch(e) {} }
+                                    if (ct.match(/javascript|json|mpegURL|dash\+xml/i)) extractUrls(resp, tag + '_xhr_resp');
+                                }
+                            } catch(e) {}
+                        }
+                        if (origCb) return origCb.apply(xhr, arguments);
+                    };
+                    return fSend.apply(this, arguments);
+                };
+            }
+            if (win.fetch) {
+                var fFetch = win.fetch;
+                win.fetch = function(input, init) {
+                    var url = typeof input === 'string' ? input : (input && input.url);
+                    var method = (init && init.method) || (input && input.method) || 'GET';
+                    if (url) report(url, tag + '_fetch', method);
+                    try {
+                        if (url && init && (init.body || init.headers)) {
+                            var bodyStr = typeof init.body === 'string' ? init.body.substring(0, 4000) : (init.body ? '[non-text body]' : '');
+                            var hdrs = {};
+                            if (init.headers) { try { if (init.headers.forEach) init.headers.forEach(function(v, k) { hdrs[k] = v; }); else hdrs = init.headers; } catch(e) {} }
+                            SBridge.onRequestPayload(url, JSON.stringify(hdrs), bodyStr);
+                        }
+                    } catch(e) {}
+                    var prom = fFetch.apply(this, arguments);
+                    prom.then(function(r) {
+                        try {
+                            var ct = r.headers.get('Content-Type') || '';
+                            if (ct.match(/mpegurl|dash\+xml|javascript|json/i)) {
+                                r.clone().text().then(function(t) {
+                                    if (t && t.length < 300000) {
+                                        extractUrls(t, tag + '_fetch_resp');
+                                        var trimmed = t.trim();
+                                        if (ct.match(/json/i) || trimmed.charAt(0) === '{' || trimmed.charAt(0) === '[') {
+                                            try { SBridge.onResponseBody(url || '', r.status, ct, trimmed.substring(0, 50000)); } catch(e) {}
+                                        }
+                                    }
+                                }).catch(function(){});
+                            }
+                        } catch(e) {}
+                    }).catch(function(){});
+                    return prom;
+                };
+            }
+        } catch(e) { /* cross-origin or otherwise inaccessible — expected, skip silently */ }
+    }
+    function tryHookIframe(iframe) {
+        try {
+            if (__sb.state.injectedFrames.has(iframe)) return;
+            var win = iframe.contentWindow;
+            if (!win || !win.document) return;   // throws here for cross-origin — caught below
+            __sb.state.injectedFrames.add(iframe);
+            hookXhrFetchOn(win, 'iframe');
+        } catch(e) { /* cross-origin — cannot hook, same restriction a real browser has */ }
+    }
+    function scanIframesForHooks() {
+        try { document.querySelectorAll('iframe').forEach(function(f) { tryHookIframe(f); }); } catch(e) {}
+    }
+
     // ── Scheduled deep scans ──────────────────────────────────────────────────
     function deepScan() {
         if (__sb.state.scanCount > 30) return;
@@ -558,6 +691,7 @@ val HOOK_JS = """
         // Scan common state stores
         try { if (window.__NEXT_DATA__) extractUrls(JSON.stringify(window.__NEXT_DATA__), 'next_data'); } catch(e) {}
         try { if (window.__INITIAL_STATE__) extractUrls(JSON.stringify(window.__INITIAL_STATE__), 'initial_state'); } catch(e) {}
+        scanIframesForHooks();
     }
     [800, 2500, 6000, 15000].forEach(function(d) {
         var t = setTimeout(deepScan, d);
@@ -575,6 +709,7 @@ val HOOK_JS = """
             var src = el.getAttribute('data-video') || el.getAttribute('data-src') || el.getAttribute('data-hls') || el.getAttribute('data-m3u8');
             if (src && src.startsWith('http')) report(src, 'init_data_attr', 'GET');
         });
+        scanIframesForHooks();
     }
 
     // ── Cleanup ───────────────────────────────────────────────────────────────
@@ -796,6 +931,25 @@ class StreamDetector(private val context: Context? = null) {
     @Synchronized fun updateRequest(url: String, updated: NetworkRequest) {
         val idx = _requests.indexOfFirst { it.url == url }
         if (idx >= 0) _requests[idx] = updated
+    }
+
+    /** Fix: merge in the request body/headers the JS hook captured at XHR.send()/fetch()
+     *  call-time — native WebResourceRequest can never expose a POST body, and the JS hook
+     *  previously captured this data (xhr.__sb_headers, send(body)/init.body) then discarded it. */
+    fun updateRequestPayload(url: String, headersJson: String, body: String) {
+        val old = synchronized(this) { _requests.find { it.url == url } } ?: return
+        val mergedHeaders = if (old.headers.isEmpty() && headersJson.isNotBlank()) {
+            try {
+                val obj = org.json.JSONObject(headersJson)
+                val map = LinkedHashMap<String, String>()
+                obj.keys().forEach { k -> map[k] = obj.optString(k, "") }
+                map
+            } catch (_: Exception) { old.headers }
+        } else old.headers
+        updateRequest(url, old.copy(
+            requestBody = if (body.isNotBlank()) body.take(4000) else old.requestBody,
+            headers = mergedHeaders
+        ))
     }
 
     @Synchronized private fun addRequest(req: NetworkRequest) {

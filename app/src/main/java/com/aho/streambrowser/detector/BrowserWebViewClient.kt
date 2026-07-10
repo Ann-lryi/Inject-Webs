@@ -39,6 +39,8 @@ class BrowserWebViewClient(
 
     // Activity-log: "JS Bridge ready" only needs to be logged once per app session
     private var bridgeReadyLogged = false
+    // Fix: warn (once per page) when the response-fetch concurrency cap causes silent skips
+    private var capWarningLogged = false
 
     private val okHttpClient by lazy {
         OkHttpClient.Builder()
@@ -66,6 +68,7 @@ class BrowserWebViewClient(
             if (url != previousUrl) {
                 detector.clear()
                 injectedUrls.clear()      // Reset injection tracking for new page
+                capWarningLogged = false
             }
 
             if (shouldInjectJs(url)) injectJavaScript(view)
@@ -134,7 +137,13 @@ class BrowserWebViewClient(
         // G3: Skip if at capacity — but allow stream URLs through at lower threshold
         val isStream = url.contains(".m3u8") || url.contains(".mpd") || url.contains(".m3u9")
         val limit = if (isStream) MAX_CONCURRENT else MAX_CONCURRENT - 2
-        if (activeRequests.get() >= limit) return
+        if (activeRequests.get() >= limit) {
+            if (!capWarningLogged) {
+                capWarningLogged = true
+                detector.addLog("warn", "Response-fetch cap reached ($MAX_CONCURRENT concurrent) — some response bodies on this page were skipped", "capture")
+            }
+            return
+        }
         activeRequests.incrementAndGet()
 
         scope.launch {
@@ -192,11 +201,27 @@ class BrowserWebViewClient(
 }
 
 class BrowserChromeClient(
+    private val detector: StreamDetector,
     private val onProgressChanged: (Int) -> Unit,
     private val onTitleReceived:   (String) -> Unit
 ) : WebChromeClient() {
     override fun onProgressChanged(view: WebView, newProgress: Int) = onProgressChanged(newProgress)
     override fun onReceivedTitle(view: WebView, title: String)      = onTitleReceived(title)
     override fun onPermissionRequest(request: PermissionRequest)    = request.grant(request.resources)
-    override fun onConsoleMessage(consoleMessage: ConsoleMessage)   = true
+    override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+        // FIX: page's real console.log/warn/error was previously discarded entirely —
+        // bare `return true` only suppressed the default Logcat mirroring. Now forwarded
+        // into the Console tab (tagged "page" so it's distinguishable from tool-internal logs).
+        try {
+            val level = when (consoleMessage.messageLevel()) {
+                ConsoleMessage.MessageLevel.ERROR   -> "error"
+                ConsoleMessage.MessageLevel.WARNING -> "warn"
+                else -> "info"
+            }
+            val src = consoleMessage.sourceId()?.substringAfterLast('/')?.take(40) ?: ""
+            val loc = if (src.isNotBlank()) "  [$src:${consoleMessage.lineNumber()}]" else ""
+            detector.addLog(level, "${consoleMessage.message()}$loc", "page")
+        } catch (_: Exception) {}
+        return true
+    }
 }

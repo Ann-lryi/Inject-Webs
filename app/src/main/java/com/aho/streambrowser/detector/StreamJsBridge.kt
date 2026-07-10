@@ -25,6 +25,17 @@ class StreamJsBridge(
         detector.reportFromJs(sUrl, sanitizeInput(source), sanitizeInput(method), getCurrentUrl())
     }
 
+    /** Fix: request body (XHR .send()/fetch init.body) + headers set via setRequestHeader/fetch
+     *  init.headers — both were already available at the hook call site but were never sent
+     *  across the bridge. NOT sanitized (same precedent as onResponseBody below): body/headers
+     *  are often JSON, and sanitizeInput's quote-stripping would corrupt that structure. */
+    @JavascriptInterface
+    fun onRequestPayload(url: String, headersJson: String, body: String) {
+        val sUrl = sanitizeInput(url)
+        if (!isValidUrl(sUrl)) return
+        detector.updateRequestPayload(sUrl, headersJson, body)
+    }
+
     /** B4: WebSocket event capture */
     @JavascriptInterface
     fun onWebSocket(direction: String, wsUrl: String, data: String) {

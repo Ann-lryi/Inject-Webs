@@ -155,6 +155,7 @@ class MainActivity : AppCompatActivity() {
         )
         b.webView.webViewClient = webViewClient!!
         b.webView.webChromeClient = BrowserChromeClient(
+            detector          = detector,
             onProgressChanged = { p -> runOnUiThread { updateProgress(p) } },
             onTitleReceived   = { t -> runOnUiThread {
                 tabManager.updateCurrent(b.webView.url ?: "", t)
