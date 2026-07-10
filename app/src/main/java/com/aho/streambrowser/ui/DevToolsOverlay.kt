@@ -69,7 +69,7 @@ class DevToolsOverlay(
     // while TABS itself hadn't been assigned yet, so it was still null at that point
     // => "Attempt to invoke interface method ... iterator() on a null object
     // reference" on EVERY DevTools open. Moving it above `init` fixes this for good.
-    private val TABS = listOf("Network","Streams","Console","Crypto","WS","Headers","Storage","CSS","Timeline","Proxy")
+    private val TABS = listOf("Network","Streams","Console","Crypto","WS","Headers","Storage","CSS","Timeline","Proxy","Cookies","Plugin")
 
     private lateinit var panelView: LinearLayout
     private lateinit var tabStrip: LinearLayout
@@ -315,6 +315,7 @@ class DevToolsOverlay(
             "Streams" -> detector.streamCount()
             "Crypto"  -> detector.cryptoCount()
             "WS"      -> detector.wsCount()
+            "Cookies" -> CookieExporter.parse(CookieExporter.getRaw(webView.url ?: "")).size
             else -> -1
         }
         val label = if (count > 0) "$name ($count)" else name
@@ -361,6 +362,8 @@ class DevToolsOverlay(
             7  -> contentArea.addView(buildCssTab())
             8  -> contentArea.addView(buildTimelineTab())
             9  -> contentArea.addView(buildProxyTab())
+            10 -> contentArea.addView(buildCookieTab())
+            11 -> contentArea.addView(buildPluginTab())
         }
         contentArea.animate().alpha(1f).setDuration(120).start()
     }
@@ -920,6 +923,146 @@ class DevToolsOverlay(
     private fun buildTimelineTab() = buildTimelineView()
     private fun buildProxyTab()    = buildProxyView()
 
+    // ── Cookies tab ──────────────────────────────────────────────────────────
+    private fun buildCookieTab(): View {
+        val sv = ScrollView(context).apply { overScrollMode = View.OVER_SCROLL_NEVER }
+        val inner = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(16)) }
+        val url = webView.url ?: ""
+        val raw = CookieExporter.getRaw(url)
+
+        inner.addView(buildSectionHeader("Cookies — ${url.take(50)}"))
+        if (raw.isBlank()) {
+            inner.addView(buildMonoTv("Không có cookie cho URL này.", TEXT_DIM, 10f))
+        } else {
+            val parsed = CookieExporter.parse(raw)
+            parsed.forEach { (k, v) ->
+                val isJwt = JwtDecoder.isJwt(v)
+                val row = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    setBackgroundColor(BG_CARD)
+                    setPadding(dp(8), dp(6), dp(8), dp(6))
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(3) }
+                }
+                // key/value shown separately with clear labeling; JWT-looking values get an inline decode
+                // action right where they are, instead of the user needing to guess and hunt for a decoder.
+                row.addView(buildMonoTv(k, if (isJwt) Color.parseColor("#FFD54F") else ACCENT, 10.5f).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                row.addView(buildMonoTv(v.take(40) + if (v.length > 40) "…" else "", TEXT_PRI, 9.5f).apply {
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f)
+                    setTextIsSelectable(true)
+                })
+                inner.addView(row)
+                if (isJwt) {
+                    inner.addView(buildActionBtn("🔍 Decode JWT: $k", Color.parseColor("#FFD54F")) {
+                        val info = JwtDecoder.decode(v)
+                        if (info != null) showJwtInfoDialog(info) else toast("Không parse được JWT")
+                    })
+                }
+            }
+        }
+
+        inner.addView(vDivider())
+        inner.addView(buildSectionHeader("Export"))
+        val exports = listOf(
+            "Cookie raw"  to CookieExporter.toDocument(url),
+            "curl -b"     to CookieExporter.toCurlFlag(url),
+            "Kotlin Map"  to CookieExporter.toKotlinMap(url),
+            "Header line" to CookieExporter.toHeaderLine(url)
+        )
+        exports.forEach { (label, value) ->
+            inner.addView(buildActionBtn("📋 Copy $label", BG_BADGE) {
+                if (value.isBlank()) toast("Không có dữ liệu để copy") else activity.copyToClipboard(value, "$label copied")
+            })
+        }
+        sv.addView(inner); return sv
+    }
+
+    private fun showJwtInfoDialog(info: JwtDecoder.JwtInfo) {
+        val d = android.app.AlertDialog.Builder(context)
+        val sv = ScrollView(context)
+        val inner = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(16)); setBackgroundColor(BG_PANEL) }
+        inner.addView(buildSectionHeader("Header"))
+        inner.addView(buildMonoTv(info.header, TEXT_PRI, 9.5f).apply { setTextIsSelectable(true) })
+        inner.addView(buildSectionHeader("Payload"))
+        inner.addView(buildMonoTv(info.payload, TEXT_PRI, 9.5f).apply { setTextIsSelectable(true) })
+        val expColor = if (info.isExpired) Color.parseColor("#EF4444") else ACCENT
+        inner.addView(buildMonoTv("Exp: ${info.expTime}  ${if (info.isExpired) "⚠ EXPIRED" else "✓ valid"}", expColor, 9.5f))
+        sv.addView(inner)
+        d.setView(sv).setPositiveButton("Copy Payload") { _, _ -> activity.copyToClipboard(info.payload, "Payload copied") }
+            .setNegativeButton("Đóng", null).show()
+    }
+
+    // ── Plugin Generator tab ────────────────────────────────────────────────────
+    private fun buildPluginTab(): View {
+        val sv = ScrollView(context).apply { overScrollMode = View.OVER_SCROLL_NEVER }
+        val inner = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(16)) }
+        val url = webView.url ?: ""
+        val site = runCatching { val u = java.net.URL(url); "${u.protocol}://${u.host}" }.getOrElse { url }
+
+        inner.addView(buildSectionHeader("☁ CloudStream3 Plugin Generator"))
+        inner.addView(buildMonoTv("Site: $site", TEXT_DIM, 10f))
+
+        val etName = buildEditText("Plugin name (vd: HentaiZ)").apply {
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            setText(site.substringAfterLast("/").substringAfterLast(".").replaceFirstChar { it.uppercaseChar() })
+        }
+        inner.addView(etName)
+
+        // Each generate action writes to its OWN labeled, persistent block below — running
+        // "Skeleton" after "Analyze" doesn't erase the analysis result, and it's always
+        // visible which block is which and whether it has actually been run yet.
+        inner.addView(buildSectionHeader("Kết quả: Phân tích URL Pattern"))
+        val tvAnalysis = buildMonoTv("(chưa chạy — bấm nút bên dưới)", TEXT_DIM, 9f).apply { setTextIsSelectable(true) }
+        inner.addView(tvAnalysis)
+        inner.addView(buildActionBtn("🔍 Analyze URL Patterns", Color.parseColor("#64B5F6")) {
+            tvAnalysis.text = PluginGenerator.analyzePatterns(detector.requests).ifBlank { "Không tìm thấy request nào giống API call." }
+        })
+        inner.addView(buildActionBtn("📋 Copy phân tích", BG_BADGE) {
+            if (tvAnalysis.text.startsWith("(chưa")) toast("Chưa chạy — bấm Analyze trước") else activity.copyToClipboard(tvAnalysis.text.toString(), "Phân tích copied")
+        })
+
+        inner.addView(vDivider())
+        inner.addView(buildSectionHeader("Kết quả: Extractor Code"))
+        val tvExtractor = buildMonoTv("(chưa chạy — bấm nút bên dưới)", TEXT_DIM, 9f).apply { setTextIsSelectable(true) }
+        inner.addView(tvExtractor)
+        inner.addView(buildActionBtn("⚙ Generate Extractor Code", ACCENT) {
+            val session = PluginGenerator.SessionData(
+                streams = detector.streams, requests = detector.requests,
+                siteUrl = site, cookies = CookieExporter.toDocument(url), referer = url
+            )
+            tvExtractor.text = PluginGenerator.generateExtractorCode(session)
+        })
+        inner.addView(buildActionBtn("📋 Copy Extractor Code", BG_BADGE) {
+            if (tvExtractor.text.startsWith("(chưa")) toast("Chưa chạy — bấm Generate trước") else activity.copyToClipboard(tvExtractor.text.toString(), "Extractor code copied")
+        })
+
+        inner.addView(vDivider())
+        inner.addView(buildSectionHeader("Kết quả: Plugin Skeleton"))
+        val tvSkeleton = buildMonoTv("(chưa chạy — bấm nút bên dưới)", TEXT_DIM, 9f).apply { setTextIsSelectable(true) }
+        inner.addView(tvSkeleton)
+        inner.addView(buildActionBtn("📋 Generate Plugin Skeleton", Color.parseColor("#FF8A65")) {
+            val name = etName.text.toString().ifBlank { "MyPlugin" }
+            tvSkeleton.text = PluginGenerator.generateSkeleton(name, site)
+        })
+        inner.addView(buildActionBtn("📋 Copy Skeleton", BG_BADGE) {
+            if (tvSkeleton.text.startsWith("(chưa")) toast("Chưa chạy — bấm Generate trước") else activity.copyToClipboard(tvSkeleton.text.toString(), "Plugin skeleton copied")
+        })
+
+        inner.addView(vDivider())
+        inner.addView(buildSectionHeader("Session Summary"))
+        val cookieCount = CookieExporter.parse(CookieExporter.toDocument(url)).size
+        inner.addView(buildMonoTv(buildString {
+            appendLine("Streams captured:    ${detector.streamCount()}")
+            appendLine("Requests captured:   ${detector.requestCount()}")
+            appendLine("WebSocket messages:  ${detector.wsCount()}")
+            appendLine("Crypto keys:         ${detector.cryptoCount()}")
+            append("Cookies:              ${if (cookieCount == 0) "none" else "$cookieCount entries"}")
+        }, TEXT_SEC, 9.5f))
+
+        sv.addView(inner); return sv
+    }
+
     // ── TAB 2: Console — filter chips + real activity log + JS REPL ────────────
     private fun buildConsoleView(): View {
         val outer = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT) }
@@ -1091,8 +1234,10 @@ class DevToolsOverlay(
         inner.addView(buildSectionHeader("Find Keys in JS (${detector.requests.count{ it.url.endsWith(".js") || it.url.contains(".js?") }} files)"))
         inner.addView(buildActionBtn("🔍 Scan JS Files", C_JS) {
             val jsUrls = detector.requests.filter { it.url.endsWith(".js") || it.url.contains(".js?") }.map { it.url }.take(15)
+            if (jsUrls.isEmpty()) { toast("Chưa bắt được file .js nào"); return@buildActionBtn }
+            toast("Đang quét ${jsUrls.size} file JS...")
             scope.launch {
-                val found: List<Any> = emptyList() // Bỏ qua quét JS nặng nề
+                val found = withContext(Dispatchers.IO) { scanJsForKeys(jsUrls) }
                 post { showFoundKeysInline(inner, found, jsUrls.size) }
             }
         })
@@ -1113,8 +1258,77 @@ class DevToolsOverlay(
         })
     }
 
+    data class JsKeyFinding(val fileUrl: String, val kind: String, val match: String, val context: String)
+
+    /** Static scan: fetch each captured .js file (bounded 500KB/file, IO thread) and look for
+     *  quoted hex strings of AES key/IV length. Heuristic, not exact — always ships with the
+     *  surrounding source context so the user (who knows the target site) can judge relevance
+     *  themselves rather than the tool guessing right or wrong silently. */
+    private fun scanJsForKeys(jsUrls: List<String>): List<JsKeyFinding> {
+        val findings = mutableListOf<JsKeyFinding>()
+        val hexPattern = Regex("""["']([0-9a-fA-F]{32}|[0-9a-fA-F]{48}|[0-9a-fA-F]{64})["']""")
+        for (fileUrl in jsUrls) {
+            if (findings.size >= 40) break
+            try {
+                val req = okhttp3.Request.Builder().url(fileUrl).build()
+                val body = jsScanClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) null else resp.body?.string()?.take(500_000)
+                } ?: continue
+                for (m in hexPattern.findAll(body)) {
+                    val hex = m.groupValues[1]
+                    val ctxStart = (m.range.first - 40).coerceAtLeast(0)
+                    val ctxEnd   = (m.range.last + 15).coerceAtMost(body.length)
+                    val ctx = body.substring(ctxStart, ctxEnd).replace("\n", " ").replace(Regex("\\s+"), " ").trim()
+                    val kind = when (hex.length) { 32 -> "128-bit"; 48 -> "192-bit"; else -> "256-bit" }
+                    findings.add(JsKeyFinding(fileUrl.substringAfterLast('/').substringBefore('?'), kind, hex, ctx))
+                    if (findings.size >= 40) break
+                }
+            } catch (_: Exception) { /* unreachable/CORS/timeout — skip this file */ }
+        }
+        return findings
+    }
+
+    private val jsScanClient by lazy {
+        okhttp3.OkHttpClient.Builder()
+            .connectTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
+
     private fun showFoundKeysInline(container: LinearLayout, found: Any?, scannedCount: Int) {
-        container.addView(emptyState("Tính năng quét JS tĩnh đã bị vô hiệu hóa."))
+        @Suppress("UNCHECKED_CAST")
+        val findings = found as? List<JsKeyFinding> ?: emptyList()
+        if (findings.isEmpty()) {
+            container.addView(emptyState("Đã quét $scannedCount file JS — không thấy chuỗi hex 32/48/64 ký tự nào trong dấu nháy."))
+            return
+        }
+        container.addView(buildSectionHeader("Tìm thấy ${findings.size} chuỗi khả nghi trong $scannedCount file"))
+        findings.forEach { f ->
+            val card = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(BG_CARD)
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(4) }
+            }
+            // File + bit-length label first — tells the user WHERE and WHAT SIZE before the raw value
+            card.addView(TextView(context).apply {
+                text = "${f.fileUrl}  ·  ${f.kind}"
+                textSize = 9f; setTextColor(TEXT_DIM)
+            })
+            card.addView(buildMonoTv(f.match, C_JS, 10f).apply { setTextIsSelectable(true) })
+            // Surrounding source code so the user can see the variable name / call site and judge
+            // whether this is really a key, or just a coincidental hex-looking hash/id.
+            card.addView(TextView(context).apply {
+                text = "…${f.context}…"
+                textSize = 8.5f; setTextColor(TEXT_SEC)
+                setPadding(0, dp(3), 0, dp(4))
+            })
+            card.addView(buildActionBtn("📋 Copy + điền vào Crypto tab", ACCENT) {
+                activity.copyToClipboard(f.match, "Copied: ${f.match.take(16)}...")
+                fillDecryptInput(f.match, "")
+            })
+            container.addView(card)
+        }
     }
 
     private var decryptCipherInput: EditText? = null
@@ -1322,6 +1536,26 @@ class DevToolsOverlay(
         val sv = ScrollView(context)
         val inner = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(16)); setBackgroundColor(BG_PANEL) }
         inner.addView(buildMonoTv(req.url, typeColor(req.tag), 10.5f).apply { setTextIsSelectable(true) })
+        if (req.url.contains(".m3u8")) {
+            inner.addView(buildActionBtn("🎞 Xem chất lượng (quality variants)", Color.parseColor("#AB47BC")) {
+                toast("Đang tải m3u8...")
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        M3u8QualityParser.fetchQualities(req.url, req.referer.ifBlank { req.pageUrl })
+                    }
+                    val qualities = result.getOrNull().orEmpty()
+                    if (qualities.isEmpty()) {
+                        toast(if (result.isFailure) "Lỗi tải m3u8: ${result.exceptionOrNull()?.message ?: "?"}" else "Không có variant (có thể là playlist 1 bitrate)")
+                    } else {
+                        val labels = qualities.map { q -> "${q.label}  ·  ${q.bandwidth / 1000}kbps  ·  ${q.codecs.ifBlank { "codec ?" }}" }.toTypedArray()
+                        android.app.AlertDialog.Builder(context)
+                            .setTitle("Quality variants (chạm để copy URL)")
+                            .setItems(labels) { _, i -> activity.copyToClipboard(qualities[i].url, "${qualities[i].label} URL copied") }
+                            .setNegativeButton("Đóng", null).show()
+                    }
+                }
+            })
+        }
         if (req.headers.isNotEmpty()) {
             inner.addView(buildSectionHeader("REQUEST HEADERS"))
             req.headers.entries.forEach { (k,v) -> inner.addView(buildMonoTv("$k: ${v.take(200)}", TEXT_SEC, 9f)) }

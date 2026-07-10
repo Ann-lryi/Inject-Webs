@@ -76,7 +76,8 @@ val HOOK_JS = """
             injectedFrames: new WeakSet(),
             hookedPlayers: new WeakSet(),
             hookedAPIs: new WeakSet(),
-            scanCount: 0
+            scanCount: 0,
+            pending: []
         },
         timers: [], observers: [], hooks: []
     };
@@ -120,16 +121,15 @@ val HOOK_JS = """
                 __sb.state.urls.delete(first);
             }
             __sb.state.urls.add(url);
-            var now = Date.now();
-            if (now - __sb.state.lastReport < __sb.config.debounceMs) {
-                clearTimeout(__sb._dt);
+            __sb.state.pending.push({ u: url, s: source, m: method || 'GET' });
+            if (!__sb._dt) {
                 __sb._dt = setTimeout(function() {
-                    __sb.state.lastReport = Date.now();
-                    SBridge.onRequest(url, source, method || 'GET');
+                    __sb._dt = null;
+                    var batch = __sb.state.pending.splice(0, __sb.state.pending.length);
+                    batch.forEach(function(item) {
+                        try { SBridge.onRequest(item.u, item.s, item.m); } catch(e) {}
+                    });
                 }, __sb.config.debounceMs);
-            } else {
-                __sb.state.lastReport = now;
-                SBridge.onRequest(url, source, method || 'GET');
             }
         } catch(e) {}
     }
@@ -921,7 +921,10 @@ class StreamDetector(private val context: Context? = null) {
 
     fun addResponseBody(url: String, statusCode: Int, contentType: String, body: String) {
         synchronized(this) {
-            if (_responseBodies.none { it.url == url }) {
+            val idx = _responseBodies.indexOfFirst { it.url == url }
+            if (idx >= 0) {
+                _responseBodies[idx] = ResponseBodyCapture(url, statusCode, contentType, body)
+            } else {
                 _responseBodies.add(0, ResponseBodyCapture(url, statusCode, contentType, body))
                 if (_responseBodies.size > 20) _responseBodies.removeAt(_responseBodies.lastIndex)
             }
