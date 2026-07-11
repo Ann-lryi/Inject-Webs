@@ -89,6 +89,11 @@ class StreamJsBridge(
     }
 
     @JavascriptInterface
+    fun onWasmDetected(url: String) {
+        detector.onWasmDetected(sanitizeInput(url))
+    }
+
+    @JavascriptInterface
     fun onStreamFound(url: String, source: String) {
         detector.reportFromJs(url, source, "GET", getCurrentUrl())
     }

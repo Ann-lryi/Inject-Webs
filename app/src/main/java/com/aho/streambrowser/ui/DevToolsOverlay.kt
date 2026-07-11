@@ -1237,7 +1237,7 @@ class DevToolsOverlay(
             if (jsUrls.isEmpty()) { toast("Chưa bắt được file .js nào"); return@buildActionBtn }
             toast("Đang quét ${jsUrls.size} file JS...")
             scope.launch {
-                val found = withContext(Dispatchers.IO) { scanJsForKeys(jsUrls) }
+                val found = scanJsForKeys(jsUrls)
                 post { showFoundKeysInline(inner, found, jsUrls.size) }
             }
         })
@@ -1258,34 +1258,38 @@ class DevToolsOverlay(
         })
     }
 
-    data class JsKeyFinding(val fileUrl: String, val kind: String, val match: String, val context: String)
+    data class JsKeyFinding(val fileUrl: String, val kind: String, val match: String, val context: String, val confidence: Int = 0)
 
-    /** Static scan: fetch each captured .js file (bounded 500KB/file, IO thread) and look for
-     *  quoted hex strings of AES key/IV length. Heuristic, not exact — always ships with the
-     *  surrounding source context so the user (who knows the target site) can judge relevance
-     *  themselves rather than the tool guessing right or wrong silently. */
-    private fun scanJsForKeys(jsUrls: List<String>): List<JsKeyFinding> {
-        val findings = mutableListOf<JsKeyFinding>()
-        val hexPattern = Regex("""["']([0-9a-fA-F]{32}|[0-9a-fA-F]{48}|[0-9a-fA-F]{64})["']""")
-        for (fileUrl in jsUrls) {
-            if (findings.size >= 40) break
-            try {
-                val req = okhttp3.Request.Builder().url(fileUrl).build()
-                val body = jsScanClient.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) null else resp.body?.string()?.take(500_000)
-                } ?: continue
-                for (m in hexPattern.findAll(body)) {
-                    val hex = m.groupValues[1]
-                    val ctxStart = (m.range.first - 40).coerceAtLeast(0)
-                    val ctxEnd   = (m.range.last + 15).coerceAtMost(body.length)
-                    val ctx = body.substring(ctxStart, ctxEnd).replace("\n", " ").replace(Regex("\\s+"), " ").trim()
-                    val kind = when (hex.length) { 32 -> "128-bit"; 48 -> "192-bit"; else -> "256-bit" }
-                    findings.add(JsKeyFinding(fileUrl.substringAfterLast('/').substringBefore('?'), kind, hex, ctx))
-                    if (findings.size >= 40) break
-                }
-            } catch (_: Exception) { /* unreachable/CORS/timeout — skip this file */ }
-        }
-        return findings
+    /** Static scan: fetch each captured .js file concurrently (bounded 500KB/file, IO dispatcher
+     *  per file) and look for quoted hex strings of AES key/IV length. Heuristic, not exact —
+     *  always ships with surrounding source context so the user (who knows the target site) can
+     *  judge relevance themselves rather than the tool guessing right or wrong silently. Results
+     *  are ranked by whether a crypto-related keyword appears nearby — not proof, just a sort hint. */
+    private suspend fun scanJsForKeys(jsUrls: List<String>): List<JsKeyFinding> = coroutineScope {
+        val hexPattern     = Regex("""["']([0-9a-fA-F]{32}|[0-9a-fA-F]{48}|[0-9a-fA-F]{64})["']""")
+        val keywordPattern = Regex("(?i)key|iv|secret|aes|crypto|cipher")
+        jsUrls.map { fileUrl ->
+            async(Dispatchers.IO) {
+                val results = mutableListOf<JsKeyFinding>()
+                try {
+                    val req = okhttp3.Request.Builder().url(fileUrl).build()
+                    val body = jsScanClient.newCall(req).execute().use { resp ->
+                        if (!resp.isSuccessful) null else resp.body?.string()?.take(500_000)
+                    } ?: return@async results
+                    for (m in hexPattern.findAll(body)) {
+                        val hex = m.groupValues[1]
+                        val ctxStart = (m.range.first - 40).coerceAtLeast(0)
+                        val ctxEnd   = (m.range.last + 15).coerceAtMost(body.length)
+                        val ctx = body.substring(ctxStart, ctxEnd).replace("\n", " ").replace(Regex("\\s+"), " ").trim()
+                        val kind = when (hex.length) { 32 -> "128-bit"; 48 -> "192-bit"; else -> "256-bit" }
+                        val confidence = if (keywordPattern.containsMatchIn(ctx)) 1 else 0
+                        results.add(JsKeyFinding(fileUrl.substringAfterLast('/').substringBefore('?'), kind, hex, ctx, confidence))
+                        if (results.size >= 15) break   // per-file cap so one huge file can't crowd out the rest
+                    }
+                } catch (_: Exception) { /* unreachable/CORS/timeout — skip this file */ }
+                results
+            }
+        }.awaitAll().flatten().sortedByDescending { it.confidence }.take(40)
     }
 
     private val jsScanClient by lazy {
@@ -1302,8 +1306,17 @@ class DevToolsOverlay(
             container.addView(emptyState("Đã quét $scannedCount file JS — không thấy chuỗi hex 32/48/64 ký tự nào trong dấu nháy."))
             return
         }
-        container.addView(buildSectionHeader("Tìm thấy ${findings.size} chuỗi khả nghi trong $scannedCount file"))
+        val highConf = findings.count { it.confidence > 0 }
+        container.addView(buildSectionHeader(
+            if (highConf > 0) "Tìm thấy ${findings.size} chuỗi khả nghi ($highConf khả năng cao) trong $scannedCount file"
+            else "Tìm thấy ${findings.size} chuỗi khả nghi trong $scannedCount file"
+        ))
+        var shownLowConfHeader = false
         findings.forEach { f ->
+            if (f.confidence == 0 && highConf > 0 && !shownLowConfHeader) {
+                shownLowConfHeader = true
+                container.addView(buildSectionHeader("Khả năng thấp hơn (không có từ khoá key/iv/aes/crypto gần đó)"))
+            }
             val card = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setBackgroundColor(BG_CARD)
@@ -1312,8 +1325,8 @@ class DevToolsOverlay(
             }
             // File + bit-length label first — tells the user WHERE and WHAT SIZE before the raw value
             card.addView(TextView(context).apply {
-                text = "${f.fileUrl}  ·  ${f.kind}"
-                textSize = 9f; setTextColor(TEXT_DIM)
+                text = (if (f.confidence > 0) "⭐ " else "") + "${f.fileUrl}  ·  ${f.kind}"
+                textSize = 9f; setTextColor(if (f.confidence > 0) C_JS else TEXT_DIM)
             })
             card.addView(buildMonoTv(f.match, C_JS, 10f).apply { setTextIsSelectable(true) })
             // Surrounding source code so the user can see the variable name / call site and judge
@@ -1496,7 +1509,11 @@ class DevToolsOverlay(
                 setOnLongClickListener { activity.copyToClipboard(req.url, "URL copied"); true }
             }
             row.addView(typeBadge(req.tag, typeColor(req.tag)).apply { layoutParams = LinearLayout.LayoutParams(dp(40), dp(16)) })
-            row.addView(buildWaterfallBar(rel, 0.06f, typeColor(req.tag)).apply { layoutParams = LinearLayout.LayoutParams(0, dp(12), 1f) })
+            row.addView(buildMonoTv("${req.host.take(16)}${req.path.take(22)}", TEXT_SEC, 8f).apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(4); marginEnd = dp(4) }
+                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+            row.addView(buildWaterfallBar(rel, 0.06f, typeColor(req.tag)))
             row.addView(buildMonoTv("+${req.timestamp-t0}ms", TEXT_DIM, 7.5f).apply { layoutParams = LinearLayout.LayoutParams(dp(45), LinearLayout.LayoutParams.WRAP_CONTENT); gravity = Gravity.END })
             inner.addView(row)
         }

@@ -223,7 +223,13 @@ class MainActivity : AppCompatActivity() {
         b.btnBookmark.setOnLongClickListener { showBookmarkHistory(); true }
         b.btnDevTools.setOnClickListener     { openDevTools() }
         b.btnDevTools.setOnLongClickListener { showQuickActions(); true }
-        b.btnPickerFloat.setOnClickListener  { b.btnPickerFloat.isVisible = !b.btnPickerFloat.isVisible }
+        b.btnPickerFloat.setOnClickListener {
+            ElementPickerManager.toggle(
+                webView       = b.webView,
+                onActivated   = { Toast.makeText(this, "🎯 Chạm vào phần tử trên trang để chọn", Toast.LENGTH_SHORT).show() },
+                onDeactivated = {}
+            )
+        }
     }
 
     private fun setupDetector() {
@@ -395,6 +401,7 @@ class MainActivity : AppCompatActivity() {
         }}
         items.add("+ New Tab"); actions.add { openNewTab() }
         items.add("📑 All Tabs"); actions.add { showTabManager() }
+        items.add("🎯 Element Picker"); actions.add { activatePicker() }
         items.add("🗑 Clear Session"); actions.add { detector.clear(); updateFab() }
         items.add(if (isIncognito) "🔓 Exit Incognito" else "🕵 Incognito"); actions.add { toggleIncognito() }
         items.add(if (isDesktopMode) "📱 Mobile" else "🖥 Desktop"); actions.add { toggleDesktopMode() }

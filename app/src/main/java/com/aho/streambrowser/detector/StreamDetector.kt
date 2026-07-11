@@ -580,6 +580,36 @@ val HOOK_JS = """
         __sb.hooks.push(function() { Element.prototype.attachShadow = oAS; });
     })();
 
+    // ── WebAssembly detection ─────────────────────────────────────────────────
+    // Cannot instrument computation *inside* a .wasm module from injected JS — not possible,
+    // same limitation a real desktop browser devtools has. This only flags that a page loaded
+    // WASM at all, so if key/token logic can't be found anywhere in the JS hooks above, this
+    // tells you why, instead of you spending time hunting for something that was never visible.
+    (function() {
+        try {
+            if (window.WebAssembly && !WebAssembly.__sb_hooked) {
+                WebAssembly.__sb_hooked = true;
+                if (WebAssembly.instantiate) {
+                    var oWasmInst = WebAssembly.instantiate;
+                    WebAssembly.instantiate = function() {
+                        try { SBridge.onWasmDetected(location.href); } catch(e) {}
+                        return oWasmInst.apply(this, arguments);
+                    };
+                }
+                if (WebAssembly.instantiateStreaming) {
+                    var oWasmInstStream = WebAssembly.instantiateStreaming;
+                    WebAssembly.instantiateStreaming = function(source) {
+                        try {
+                            var url = (source && source.url) ? source.url : (typeof source === 'string' ? source : location.href);
+                            SBridge.onWasmDetected(url);
+                        } catch(e) {}
+                        return oWasmInstStream.apply(this, arguments);
+                    };
+                }
+            }
+        } catch(e) {}
+    })();
+
     // ── Same-origin iframe hooking ──────────────────────────────────────────────
     // Injection only ever ran in the main frame: onPageStarted/onPageFinished (native side)
     // don't fire for subframe navigations, so embed-iframe players (common on VN streaming
@@ -819,6 +849,7 @@ class StreamDetector(private val context: Context? = null) {
     private val _wsMessages     = mutableListOf<WebSocketMessage>()
     private val _responseBodies = mutableListOf<ResponseBodyCapture>()
     private val _activityLog    = mutableListOf<ActivityLogEntry>()
+    private val _wasmSeen       = mutableSetOf<String>()
 
     val streams:        List<StreamItem>          get() = synchronized(this) { _streams.toList()        }
     val requests:       List<NetworkRequest>      get() = synchronized(this) { _requests.toList()       }
@@ -871,6 +902,14 @@ class StreamDetector(private val context: Context? = null) {
         synchronized(this) {
             _activityLog.add(0, ActivityLogEntry(level, message, source))
             if (_activityLog.size > 200) _activityLog.removeAt(_activityLog.lastIndex)
+        }
+    }
+
+    fun onWasmDetected(url: String) {
+        val isNew = synchronized(this) { _wasmSeen.add(url) }
+        if (isNew) {
+            val name = url.substringAfterLast('/').substringBefore('?').take(40)
+            addLog("warn", "WebAssembly module loaded ($name) — một phần logic có thể không thấy được qua JS hook", "wasm")
         }
     }
 
