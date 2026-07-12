@@ -101,6 +101,71 @@ val HOOK_JS = """
         } catch(e) {}
     })();
 
+    // ── Anti-fingerprint: hide native-API hook signatures from Function.prototype.toString ──
+    // A page can detect that XHR/fetch/WebSocket/etc. have been tampered with by calling
+    // fn.toString() — real native browser methods return "function x() { [native code] }",
+    // a monkey-patched replacement returns its actual JS source. Every native-API hook below
+    // (not the JS-library hooks like CryptoJS/player libs, which were never "native" to begin
+    // with and have nothing to hide) wraps its replacement in N(...) to register it here.
+    // MUST run before any hook below so N() exists when they need it.
+    var __sbNative = new WeakSet();
+    function N(fn) { try { __sbNative.add(fn); } catch(e) {} return fn; }
+    (function() {
+        try {
+            var origToString = Function.prototype.toString;
+            Function.prototype.toString = N(function() {
+                if (__sbNative.has(this)) return 'function ' + (this.name || '') + '() { [native code] }';
+                return origToString.call(this);
+            });
+        } catch(e) {}
+    })();
+
+    // ── Canvas fingerprint noise ─────────────────────────────────────────────
+    // Anti-bot services commonly fingerprint via canvas render output — identical input
+    // pixels hash differently across real GPU/driver combos but often identically across
+    // automated/emulated environments, making it a strong bot signal. Standard countermeasure
+    // (same one Brave/Tor Browser use): inject imperceptible per-pixel noise into the OUTPUT
+    // of getImageData/toDataURL so the hash changes. Uses an off-screen temp canvas for
+    // toDataURL so the page's own visible canvas is never mutated — only what's read OUT.
+    (function() {
+        try {
+            if (__sb_protected || !window.CanvasRenderingContext2D || !window.HTMLCanvasElement) return;
+            var noisify = function(imageData) {
+                var d = imageData.data;
+                for (var i = 0; i < d.length; i += 4) {
+                    var n = ((i >> 2) % 7) - 3;
+                    d[i]   = Math.max(0, Math.min(255, d[i]   + n));
+                    d[i+1] = Math.max(0, Math.min(255, d[i+1] + n));
+                    d[i+2] = Math.max(0, Math.min(255, d[i+2] + n));
+                }
+                return imageData;
+            };
+            var CtxProto = CanvasRenderingContext2D.prototype;
+            var oGetImageData = CtxProto.getImageData;
+            CtxProto.getImageData = N(function() {
+                var result = oGetImageData.apply(this, arguments);
+                try { return noisify(result); } catch(e) { return result; }
+            });
+            var CanvasProto = HTMLCanvasElement.prototype;
+            var oToDataURL = CanvasProto.toDataURL;
+            CanvasProto.toDataURL = N(function() {
+                try {
+                    var w = this.width, h = this.height;
+                    if (w > 0 && h > 0 && w * h < 4000000) {
+                        var tmp = document.createElement('canvas');
+                        tmp.width = w; tmp.height = h;
+                        var tctx = tmp.getContext('2d');
+                        tctx.drawImage(this, 0, 0);
+                        var id = oGetImageData.call(tctx, 0, 0, w, h);
+                        tctx.putImageData(noisify(id), 0, 0);   // safe: tmp is off-screen, never shown
+                        return oToDataURL.apply(tmp, arguments);
+                    }
+                } catch(e) {}
+                return oToDataURL.apply(this, arguments);
+            });
+        } catch(e) {}
+    })();
+
     // ── Utilities ────────────────────────────────────────────────────────────
     function normalizeUrl(url) {
         if (!url || typeof url !== 'string') return null;
@@ -158,13 +223,13 @@ val HOOK_JS = """
         __sb.state.hookedAPIs.add('xhr');
         var XHR = XMLHttpRequest;
         var oOpen = XHR.prototype.open, oSend = XHR.prototype.send, oSetHdr = XHR.prototype.setRequestHeader;
-        XHR.prototype.open = function(m, url) { this.__sb_url = url; this.__sb_method = m; return oOpen.apply(this, arguments); };
-        XHR.prototype.setRequestHeader = function(n, v) {
+        XHR.prototype.open = N(function(m, url) { this.__sb_url = url; this.__sb_method = m; return oOpen.apply(this, arguments); });
+        XHR.prototype.setRequestHeader = N(function(n, v) {
             if (!this.__sb_headers) this.__sb_headers = {};
             this.__sb_headers[n.toLowerCase()] = v;
             return oSetHdr.apply(this, arguments);
-        };
-        XHR.prototype.send = function(body) {
+        });
+        XHR.prototype.send = N(function(body) {
             var xhr = this;
             report(xhr.__sb_url, 'xhr', xhr.__sb_method || 'GET');
             // Fix: forward the request body/headers we already captured — was discarded before
@@ -200,7 +265,7 @@ val HOOK_JS = """
                 if (origCb) return origCb.apply(xhr, arguments);
             };
             return oSend.apply(this, arguments);
-        };
+        });
         __sb.hooks.push(function() {
             XHR.prototype.open = oOpen; XHR.prototype.send = oSend; XHR.prototype.setRequestHeader = oSetHdr;
         });
@@ -211,7 +276,7 @@ val HOOK_JS = """
         if (__sb.state.hookedAPIs.has('fetch')) return;
         __sb.state.hookedAPIs.add('fetch');
         var oFetch = window.fetch;
-        window.fetch = function(input, init) {
+        window.fetch = N(function(input, init) {
             var url = typeof input === 'string' ? input : (input && input.url);
             var method = (init && init.method) || (input && input.method) || 'GET';
             if (url) report(url, 'fetch', method);
@@ -246,7 +311,7 @@ val HOOK_JS = """
                 } catch(e) {}
             }).catch(function(){});
             return prom;
-        };
+        });
         __sb.hooks.push(function() { window.fetch = oFetch; });
     })();
 
@@ -259,21 +324,21 @@ val HOOK_JS = """
         if (sd && sd.set) {
             Object.defineProperty(proto, 'src', {
                 get: function() { return sd.get.call(this); },
-                set: function(v) { if (v) report(v, 'media_src', 'GET'); return sd.set.call(this, v); },
+                set: N(function(v) { if (v) report(v, 'media_src', 'GET'); return sd.set.call(this, v); }),
                 configurable: true
             });
         }
         var origLoad = proto.load;
-        proto.load = function() { if (this.src) report(this.src, 'media_load', 'GET'); return origLoad.apply(this, arguments); };
+        proto.load = N(function() { if (this.src) report(this.src, 'media_load', 'GET'); return origLoad.apply(this, arguments); });
         var origSetAttr = Element.prototype.setAttribute;
-        Element.prototype.setAttribute = function(n, v) {
+        Element.prototype.setAttribute = N(function(n, v) {
             var r = origSetAttr.apply(this, arguments);
             if ((this.tagName === 'VIDEO' || this.tagName === 'AUDIO' || this.tagName === 'SOURCE') &&
                 (n === 'src' || n.startsWith('data-')) && v && v.startsWith('http')) {
                 report(v, 'attr_' + n, 'GET');
             }
             return r;
-        };
+        });
         __sb.hooks.push(function() {
             if (sd) Object.defineProperty(proto, 'src', sd);
             proto.load = origLoad;
@@ -478,7 +543,7 @@ val HOOK_JS = """
             return Array.from(arr).map(function(b) { return ('0' + b.toString(16)).slice(-2); }).join('');
         }
         var oImport = sub.importKey.bind(sub);
-        sub.importKey = function(fmt, keyData, alg, extractable, usages) {
+        sub.importKey = N(function(fmt, keyData, alg, extractable, usages) {
             try {
                 if (keyData instanceof ArrayBuffer || ArrayBuffer.isView(keyData)) {
                     var hex = toHex(keyData);
@@ -486,9 +551,9 @@ val HOOK_JS = """
                 }
             } catch(e) {}
             return oImport.apply(this, arguments);
-        };
+        });
         var oDecrypt = sub.decrypt.bind(sub);
-        sub.decrypt = function(alg, key, data) {
+        sub.decrypt = N(function(alg, key, data) {
             try {
                 if (alg && alg.iv) {
                     var iv = alg.iv instanceof ArrayBuffer ? new Uint8Array(alg.iv) :
@@ -497,7 +562,7 @@ val HOOK_JS = """
                 }
             } catch(e) {}
             return oDecrypt.apply(this, arguments);
-        };
+        });
         __sb.hooks.push(function() { sub.importKey = oImport; sub.decrypt = oDecrypt; });
     })();
 
@@ -560,7 +625,7 @@ val HOOK_JS = """
     (function() {
         var oAS = Element.prototype.attachShadow;
         if (!oAS) return;
-        Element.prototype.attachShadow = function(mode) {
+        Element.prototype.attachShadow = N(function(mode) {
             var sr = oAS.call(this, mode);
             try {
                 var obs = new MutationObserver(function(ms) {
@@ -576,7 +641,7 @@ val HOOK_JS = """
                 __sb.observers.push(obs);
             } catch(e) {}
             return sr;
-        };
+        });
         __sb.hooks.push(function() { Element.prototype.attachShadow = oAS; });
     })();
 
@@ -591,20 +656,45 @@ val HOOK_JS = """
                 WebAssembly.__sb_hooked = true;
                 if (WebAssembly.instantiate) {
                     var oWasmInst = WebAssembly.instantiate;
-                    WebAssembly.instantiate = function() {
+                    WebAssembly.instantiate = N(function() {
                         try { SBridge.onWasmDetected(location.href); } catch(e) {}
                         return oWasmInst.apply(this, arguments);
-                    };
+                    });
                 }
                 if (WebAssembly.instantiateStreaming) {
                     var oWasmInstStream = WebAssembly.instantiateStreaming;
-                    WebAssembly.instantiateStreaming = function(source) {
+                    WebAssembly.instantiateStreaming = N(function(source) {
                         try {
                             var url = (source && source.url) ? source.url : (typeof source === 'string' ? source : location.href);
                             SBridge.onWasmDetected(url);
                         } catch(e) {}
                         return oWasmInstStream.apply(this, arguments);
-                    };
+                    });
+                }
+            }
+        } catch(e) {}
+    })();
+
+    // ── Service Worker detection ──────────────────────────────────────────────
+    // A registered Service Worker runs fetch/XHR-equivalent logic in its own global scope
+    // (`self`, not `window`) — completely separate from and invisible to every hook above.
+    // Cannot intercept from page-injected JS (this is a browser/OS-level registration, not
+    // something page JS can instrument), but flags that one exists, same reasoning as WASM.
+    (function() {
+        try {
+            if (navigator.serviceWorker && !navigator.serviceWorker.__sb_hooked) {
+                navigator.serviceWorker.__sb_hooked = true;
+                var oRegister = navigator.serviceWorker.register;
+                if (oRegister) {
+                    navigator.serviceWorker.register = N(function(scriptUrl) {
+                        try { SBridge.onServiceWorkerDetected(typeof scriptUrl === 'string' ? scriptUrl : location.href); } catch(e) {}
+                        return oRegister.apply(this, arguments);
+                    });
+                }
+                // Also catch SWs already active before this hook ran (registered on a previous
+                // load, still controlling this page via the browser's SW cache)
+                if (navigator.serviceWorker.controller) {
+                    try { SBridge.onServiceWorkerDetected(navigator.serviceWorker.controller.scriptURL || location.href); } catch(e) {}
                 }
             }
         } catch(e) {}
@@ -624,13 +714,13 @@ val HOOK_JS = """
             if (win.XMLHttpRequest) {
                 var FXHR = win.XMLHttpRequest;
                 var fOpen = FXHR.prototype.open, fSend = FXHR.prototype.send, fSetHdr = FXHR.prototype.setRequestHeader;
-                FXHR.prototype.open = function(m, url) { this.__sb_url = url; this.__sb_method = m; return fOpen.apply(this, arguments); };
-                FXHR.prototype.setRequestHeader = function(n, v) {
+                FXHR.prototype.open = N(function(m, url) { this.__sb_url = url; this.__sb_method = m; return fOpen.apply(this, arguments); });
+                FXHR.prototype.setRequestHeader = N(function(n, v) {
                     if (!this.__sb_headers) this.__sb_headers = {};
                     this.__sb_headers[n.toLowerCase()] = v;
                     return fSetHdr.apply(this, arguments);
-                };
-                FXHR.prototype.send = function(body) {
+                });
+                FXHR.prototype.send = N(function(body) {
                     var xhr = this;
                     report(xhr.__sb_url, tag + '_xhr', xhr.__sb_method || 'GET');
                     try {
@@ -656,11 +746,11 @@ val HOOK_JS = """
                         if (origCb) return origCb.apply(xhr, arguments);
                     };
                     return fSend.apply(this, arguments);
-                };
+                });
             }
             if (win.fetch) {
                 var fFetch = win.fetch;
-                win.fetch = function(input, init) {
+                win.fetch = N(function(input, init) {
                     var url = typeof input === 'string' ? input : (input && input.url);
                     var method = (init && init.method) || (input && input.method) || 'GET';
                     if (url) report(url, tag + '_fetch', method);
@@ -690,7 +780,7 @@ val HOOK_JS = """
                         } catch(e) {}
                     }).catch(function(){});
                     return prom;
-                };
+                });
             }
         } catch(e) { /* cross-origin or otherwise inaccessible — expected, skip silently */ }
     }
@@ -764,7 +854,7 @@ val HOOK_JS = """
         __sb.state.hookedAPIs.add('ws');
         var OrigWS = window.WebSocket;
         if (!OrigWS) return;
-        window.WebSocket = function(url, protocols) {
+        window.WebSocket = N(function(url, protocols) {
             try { SBridge.onWebSocket('open', url, ''); } catch(e) {}
             var ws = protocols ? new OrigWS(url, protocols) : new OrigWS(url);
             var origSend = ws.send.bind(ws);
@@ -786,7 +876,7 @@ val HOOK_JS = """
                 try { SBridge.onWebSocket('close', url, ''); } catch(e) {}
             });
             return ws;
-        };
+        });
         try {
             window.WebSocket.prototype = OrigWS.prototype;
             window.WebSocket.CONNECTING = OrigWS.CONNECTING;
@@ -822,19 +912,9 @@ val HOOK_JS = """
         });
     })();
 
-    // ── E5: Anti-fingerprint (toString leak prevention) ───────────────────────
-    (function() {
-        try {
-            var origToString = Function.prototype.toString;
-            var patched = new WeakSet();
-            Function.prototype.toString = function() {
-                if (patched.has(this)) return 'function() { [native code] }';
-                return origToString.call(this);
-            };
-            // Mark our hooks as "native" to avoid detection
-            patched.add(Function.prototype.toString);
-        } catch(e) {}
-    })();
+    // ── E5: Anti-fingerprint (toString leak prevention) ────────────────────────
+    // Implementation moved near the top of this script (must run before any hook below,
+    // since every hook now needs N() to exist at the moment it installs itself).
 
     return 'ok';
 })();
@@ -850,6 +930,7 @@ class StreamDetector(private val context: Context? = null) {
     private val _responseBodies = mutableListOf<ResponseBodyCapture>()
     private val _activityLog    = mutableListOf<ActivityLogEntry>()
     private val _wasmSeen       = mutableSetOf<String>()
+    private val _swSeen         = mutableSetOf<String>()
 
     val streams:        List<StreamItem>          get() = synchronized(this) { _streams.toList()        }
     val requests:       List<NetworkRequest>      get() = synchronized(this) { _requests.toList()       }
@@ -910,6 +991,14 @@ class StreamDetector(private val context: Context? = null) {
         if (isNew) {
             val name = url.substringAfterLast('/').substringBefore('?').take(40)
             addLog("warn", "WebAssembly module loaded ($name) — một phần logic có thể không thấy được qua JS hook", "wasm")
+        }
+    }
+
+    fun onServiceWorkerDetected(scriptUrl: String) {
+        val isNew = synchronized(this) { _swSeen.add(scriptUrl) }
+        if (isNew) {
+            val name = scriptUrl.substringAfterLast('/').substringBefore('?').take(40)
+            addLog("warn", "Service Worker phát hiện ($name) — request bên trong SW nằm ngoài tầm với của mọi hook JS ở trên", "sw")
         }
     }
 

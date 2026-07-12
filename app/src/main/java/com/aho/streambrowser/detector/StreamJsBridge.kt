@@ -94,6 +94,11 @@ class StreamJsBridge(
     }
 
     @JavascriptInterface
+    fun onServiceWorkerDetected(scriptUrl: String) {
+        detector.onServiceWorkerDetected(sanitizeInput(scriptUrl))
+    }
+
+    @JavascriptInterface
     fun onStreamFound(url: String, source: String) {
         detector.reportFromJs(url, source, "GET", getCurrentUrl())
     }
