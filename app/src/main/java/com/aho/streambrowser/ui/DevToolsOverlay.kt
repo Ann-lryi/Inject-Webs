@@ -36,6 +36,15 @@ class DevToolsOverlay(
     private val TEXT_PRI   = Color.parseColor("#F0F0F0")
     private val TEXT_SEC   = Color.parseColor("#888888")
     private val TEXT_DIM   = Color.parseColor("#444444")
+
+    // Named type scale — audit found 10 different ad-hoc textSize values in use (7.5f..14f)
+    // with no clear meaning attached to any of them. Not retrofitting every existing call site,
+    // but new code should reach for these instead of picking another arbitrary number.
+    private val SZ_MICRO    = 8f    // timestamps, tertiary metadata
+    private val SZ_LABEL    = 9f    // secondary/supporting text — the most common size in the app
+    private val SZ_BODY     = 10.5f // primary readable content (URLs, values)
+    private val SZ_EMPHASIS = 12f   // section headers
+    private val SZ_TITLE    = 14f   // major headers
     private val DIVIDER    = Color.parseColor("#222222")
 
     // Type badge colors
@@ -729,11 +738,12 @@ class DevToolsOverlay(
         val typeColor = streamTypeColor(stream.type)
         val card = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(BG_CARD)
+            background = roundRect(BG_CARD, 6f)
+            elevation = dp(2).toFloat()
             setPadding(dp(12), dp(10), dp(12), dp(10))
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = dp(2); marginStart = dp(8); marginEnd = dp(8)
+                bottomMargin = dp(6); marginStart = dp(8); marginEnd = dp(8)
             }
         }
         // Type + quality + codec badges row
@@ -885,10 +895,11 @@ class DevToolsOverlay(
     private fun buildHeadersCard(req: NetworkRequest): View {
         val card = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(BG_CARD)
+            background = roundRect(BG_CARD, 6f)
+            elevation = dp(2).toFloat()
             setPadding(dp(10), dp(8), dp(10), dp(10))
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(4) }
+                LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6) }
         }
         card.addView(buildMonoTv(req.url.take(80), typeColor(req.tag), 9.5f).apply { setTextIsSelectable(true) })
         if (req.headers.isNotEmpty()) {
@@ -1198,7 +1209,9 @@ class DevToolsOverlay(
             val accent   = if (isSubtle) C_MP4 else C_M3U9
             val cardBg   = if (isSubtle) C_BLUE_BG else C_WARN_BG
             val card = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL; setBackgroundColor(cardBg)
+                orientation = LinearLayout.VERTICAL
+                background = roundRect(cardBg, 6f)
+                elevation = dp(2).toFloat()
                 setPadding(dp(10), dp(8), dp(10), dp(8))
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) }
             }
@@ -1241,10 +1254,18 @@ class DevToolsOverlay(
         inner.addView(buildActionBtn("🔍 Scan JS Files", C_JS) {
             val jsUrls = detector.requests.filter { it.url.endsWith(".js") || it.url.contains(".js?") }.map { it.url }.take(15)
             if (jsUrls.isEmpty()) { toast("Chưa bắt được file .js nào"); return@buildActionBtn }
-            toast("Đang quét ${jsUrls.size} file JS...")
+            val loading = TextView(context).apply {
+                text = "⏳ Đang quét ${jsUrls.size} file JS..."
+                textSize = SZ_LABEL; setTextColor(TEXT_DIM)
+                setPadding(dp(2), dp(8), dp(2), dp(4))
+            }
+            inner.addView(loading)
             scope.launch {
                 val found = scanJsForKeys(jsUrls)
-                post { showFoundKeysInline(inner, found, jsUrls.size) }
+                post {
+                    inner.removeView(loading)
+                    showFoundKeysInline(inner, found, jsUrls.size)
+                }
             }
         })
         sv.addView(inner); return sv
@@ -1325,9 +1346,10 @@ class DevToolsOverlay(
             }
             val card = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                setBackgroundColor(BG_CARD)
+                background = roundRect(BG_CARD, 6f)
+                elevation = dp(2).toFloat()
                 setPadding(dp(10), dp(8), dp(10), dp(8))
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(4) }
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6) }
             }
             // File + bit-length label first — tells the user WHERE and WHAT SIZE before the raw value
             card.addView(TextView(context).apply {
@@ -1564,12 +1586,18 @@ class DevToolsOverlay(
         inner.addView(buildMonoTv(req.url, typeColor(req.tag), 10.5f).apply { setTextIsSelectable(true) })
         if (req.url.contains(".m3u8")) {
             inner.addView(buildActionBtn("🎞 Xem chất lượng (quality variants)", ACCENT) {
-                toast("Đang tải m3u8...")
+                val loading = TextView(context).apply {
+                    text = "⏳ Đang tải m3u8..."
+                    textSize = SZ_LABEL; setTextColor(TEXT_DIM)
+                    setPadding(dp(2), dp(6), dp(2), dp(4))
+                }
+                inner.addView(loading)
                 scope.launch {
                     val result = withContext(Dispatchers.IO) {
                         M3u8QualityParser.fetchQualities(req.url, req.referer.ifBlank { req.pageUrl })
                     }
                     val qualities = result.getOrNull().orEmpty()
+                    post { inner.removeView(loading) }
                     if (qualities.isEmpty()) {
                         toast(if (result.isFailure) "Lỗi tải m3u8: ${result.exceptionOrNull()?.message ?: "?"}" else "Không có variant (có thể là playlist 1 bitrate)")
                     } else {
@@ -1797,7 +1825,7 @@ class DevToolsOverlay(
         // Ensure we start from below screen regardless of last drag position
         panelView.translationY = panelH
         ObjectAnimator.ofFloat(panelView, "translationY", panelH, 0f)
-            .apply { duration = 300; interpolator = android.view.animation.DecelerateInterpolator(); start() }
+            .apply { duration = 340; interpolator = android.view.animation.OvershootInterpolator(1.02f); start() }
         refresh()
     }
 
