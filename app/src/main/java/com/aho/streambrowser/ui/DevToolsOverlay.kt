@@ -32,6 +32,7 @@ class DevToolsOverlay(
     private val BG_CARD2   = Color.parseColor("#1A1A1A")
     private val BG_BADGE   = Color.parseColor("#1E1E1E")
     private val ACCENT     = Color.parseColor("#1DB954")
+    private val DANGER     = Color.parseColor("#EF4444")
     private val TEXT_PRI   = Color.parseColor("#F0F0F0")
     private val TEXT_SEC   = Color.parseColor("#888888")
     private val TEXT_DIM   = Color.parseColor("#444444")
@@ -508,7 +509,7 @@ class DevToolsOverlay(
         val (icon, iconColor) = rowIcon(req)
         val row = LinearLayout(context).apply {
             orientation  = LinearLayout.HORIZONTAL
-            setBackgroundColor(BG_CARD2)
+            background = rippleRect(BG_CARD2, 0f)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 1 }
             setOnClickListener { showRequestDetail(req) }
@@ -556,7 +557,7 @@ class DevToolsOverlay(
         val statusColor = when {
             req.statusCode in 200..299 -> ACCENT
             req.statusCode in 300..399 -> C_M3U9
-            req.statusCode >= 400      -> Color.parseColor("#EF4444")
+            req.statusCode >= 400      -> DANGER
             else -> TEXT_DIM
         }
         content.addView(TextView(context).apply {
@@ -782,7 +783,7 @@ class DevToolsOverlay(
         val ageMs = detector.getStreamAge(stream.url)
         if (ageMs > 0) {
             val ageSec = ageMs / 1000
-            val ageColor = when { ageSec < 60 -> ACCENT; ageSec < 300 -> C_JS; else -> Color.parseColor("#EF4444") }
+            val ageColor = when { ageSec < 60 -> ACCENT; ageSec < 300 -> C_JS; else -> DANGER }
             card.addView(TextView(context).apply {
                 text = if (ageSec < 60) "⏱ ${ageSec}s ago" else if (ageSec < 3600) "⏱ ${ageSec/60}min ago" else "⚠ ${ageSec/3600}h ago — may expire"
                 textSize = 8.5f; setTextColor(ageColor)
@@ -853,11 +854,12 @@ class DevToolsOverlay(
 
         // JWT Decoder
         inner.addView(buildSectionHeader("# JWT Decoder"))
-        val etJwt = buildEditText("Paste JWT token...").apply {
+        val (jwtWrap, etJwt) = buildLabeledInput("JWT token", "eyJhbGc...")
+        etJwt.apply {
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
         }
-        inner.addView(etJwt)
+        inner.addView(jwtWrap)
         inner.addView(TextView(context).apply {
             text = "Paste any JWT above to decode header + payload"
             textSize = 9f; setTextColor(TEXT_DIM)
@@ -954,7 +956,7 @@ class DevToolsOverlay(
                 })
                 inner.addView(row)
                 if (isJwt) {
-                    inner.addView(buildActionBtn("🔍 Decode JWT: $k", Color.parseColor("#FFD54F")) {
+                    inner.addView(buildActionBtn("🔍 Decode JWT: $k", ACCENT) {
                         val info = JwtDecoder.decode(v)
                         if (info != null) showJwtInfoDialog(info) else toast("Không parse được JWT")
                     })
@@ -986,7 +988,7 @@ class DevToolsOverlay(
         inner.addView(buildMonoTv(info.header, TEXT_PRI, 9.5f).apply { setTextIsSelectable(true) })
         inner.addView(buildSectionHeader("Payload"))
         inner.addView(buildMonoTv(info.payload, TEXT_PRI, 9.5f).apply { setTextIsSelectable(true) })
-        val expColor = if (info.isExpired) Color.parseColor("#EF4444") else ACCENT
+        val expColor = if (info.isExpired) DANGER else ACCENT
         inner.addView(buildMonoTv("Exp: ${info.expTime}  ${if (info.isExpired) "⚠ EXPIRED" else "✓ valid"}", expColor, 9.5f))
         sv.addView(inner)
         d.setView(sv).setPositiveButton("Copy Payload") { _, _ -> activity.copyToClipboard(info.payload, "Payload copied") }
@@ -1003,11 +1005,12 @@ class DevToolsOverlay(
         inner.addView(buildSectionHeader("☁ CloudStream3 Plugin Generator"))
         inner.addView(buildMonoTv("Site: $site", TEXT_DIM, 10f))
 
-        val etName = buildEditText("Plugin name (vd: HentaiZ)").apply {
+        val (nameWrap, etName) = buildLabeledInput("Plugin name", "vd: HentaiZ")
+        etName.apply {
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             setText(site.substringAfterLast("/").substringAfterLast(".").replaceFirstChar { it.uppercaseChar() })
         }
-        inner.addView(etName)
+        inner.addView(nameWrap)
 
         // Each generate action writes to its OWN labeled, persistent block below — running
         // "Skeleton" after "Analyze" doesn't erase the analysis result, and it's always
@@ -1015,7 +1018,7 @@ class DevToolsOverlay(
         inner.addView(buildSectionHeader("Kết quả: Phân tích URL Pattern"))
         val tvAnalysis = buildMonoTv("(chưa chạy — bấm nút bên dưới)", TEXT_DIM, 9f).apply { setTextIsSelectable(true) }
         inner.addView(tvAnalysis)
-        inner.addView(buildActionBtn("🔍 Analyze URL Patterns", Color.parseColor("#64B5F6")) {
+        inner.addView(buildActionBtn("🔍 Analyze URL Patterns", ACCENT) {
             tvAnalysis.text = PluginGenerator.analyzePatterns(detector.requests).ifBlank { "Không tìm thấy request nào giống API call." }
         })
         inner.addView(buildActionBtn("📋 Copy phân tích", BG_BADGE) {
@@ -1041,7 +1044,7 @@ class DevToolsOverlay(
         inner.addView(buildSectionHeader("Kết quả: Plugin Skeleton"))
         val tvSkeleton = buildMonoTv("(chưa chạy — bấm nút bên dưới)", TEXT_DIM, 9f).apply { setTextIsSelectable(true) }
         inner.addView(tvSkeleton)
-        inner.addView(buildActionBtn("📋 Generate Plugin Skeleton", Color.parseColor("#FF8A65")) {
+        inner.addView(buildActionBtn("📋 Generate Plugin Skeleton", ACCENT) {
             val name = etName.text.toString().ifBlank { "MyPlugin" }
             tvSkeleton.text = PluginGenerator.generateSkeleton(name, site)
         })
@@ -1074,7 +1077,7 @@ class DevToolsOverlay(
             setPadding(dp(8), dp(6), dp(8), dp(6))
         }
         listOf("All" to TEXT_SEC, "Info" to TEXT_SEC, "Success" to ACCENT,
-               "Warn" to C_M3U9, "Error" to Color.parseColor("#EF4444")).forEach { (level, col) ->
+               "Warn" to C_M3U9, "Error" to DANGER).forEach { (level, col) ->
             val isActive = level == consoleLevelFilter
             chipRow.addView(TextView(context).apply {
                 text = level; textSize = 10f
@@ -1148,7 +1151,7 @@ class DevToolsOverlay(
         val (icon, iconColor) = when (entry.level) {
             "success" -> "✓" to ACCENT
             "warn"    -> "⚠" to C_M3U9
-            "error"   -> "✕" to Color.parseColor("#EF4444")
+            "error"   -> "✕" to DANGER
             else      -> "›" to TEXT_SEC
         }
         val rowBg = when (entry.level) {
@@ -1219,9 +1222,12 @@ class DevToolsOverlay(
 
         // AES Decrypt Helper
         inner.addView(buildSectionHeader("AES DECRYPT HELPER"))
-        val etKey    = buildEditText("Key (hex)").apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS; typeface = Typeface.MONOSPACE }; inner.addView(etKey)
-        val etIv     = buildEditText("IV (hex)").apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS; typeface = Typeface.MONOSPACE }; inner.addView(etIv)
-        val etCipher = buildEditText("Ciphertext (base64)").apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS; typeface = Typeface.MONOSPACE }; inner.addView(etCipher)
+        val (keyWrap, etKey) = buildLabeledInput("Key (hex)", "vd: a1b2c3...")
+        etKey.apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS; typeface = Typeface.MONOSPACE }; inner.addView(keyWrap)
+        val (ivWrap, etIv) = buildLabeledInput("IV (hex)", "vd: f0e1d2...")
+        etIv.apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS; typeface = Typeface.MONOSPACE }; inner.addView(ivWrap)
+        val (cipherWrap, etCipher) = buildLabeledInput("Ciphertext (base64)", "vd: U2FsdGVk...")
+        etCipher.apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS; typeface = Typeface.MONOSPACE }; inner.addView(cipherWrap)
         val tvResult = buildMonoTv("", TEXT_SEC, 9.5f)
         inner.addView(buildActionBtn("🔓 Decrypt", ACCENT) {
             tvResult.text = aesDecryptHexIvB64Cipher(etKey.text.toString().trim(), etIv.text.toString().trim(), etCipher.text.toString().trim())
@@ -1397,7 +1403,7 @@ class DevToolsOverlay(
                 inner.addView(LinearLayout(context).apply {
                     orientation = LinearLayout.HORIZONTAL; gravity = Gravity.TOP
                     setPadding(dp(8), dp(7), dp(8), dp(7))
-                    setBackgroundColor(BG_CARD2)
+                    background = rippleRect(BG_CARD2, 0f)
                     layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 1 }
                     addView(TextView(context).apply {
                         text = dirLabel; textSize = 8.5f; setTextColor(Color.BLACK)
@@ -1455,7 +1461,7 @@ class DevToolsOverlay(
             if (fullStorageJson.isNotBlank()) activity.copyToClipboard(fullStorageJson, "Storage JSON copied (${fullStorageJson.length} chars)")
             else toast("Chưa đọc xong, thử lại sau")
         })
-        inner.addView(buildActionBtn("🗑 Clear localStorage", Color.parseColor("#EF4444")) {
+        inner.addView(buildActionBtn("🗑 Clear localStorage", DANGER) {
             webView.evaluateJavascript("localStorage.clear();void 0", null)
             toast("localStorage cleared")
         })
@@ -1478,7 +1484,7 @@ class DevToolsOverlay(
             webView.evaluateJavascript("""(function(){var el=document.getElementById('__sb_css');if(!el){el=document.createElement('style');el.id='__sb_css';document.head.appendChild(el);}el.textContent=`$css`;return 'ok';})()""", null)
             toast("CSS injected")
         })
-        btnRow.addView(buildActionBtn("✖ Remove", Color.parseColor("#EF4444")) {
+        btnRow.addView(buildActionBtn("✖ Remove", DANGER) {
             webView.evaluateJavascript("var e=document.getElementById('__sb_css');if(e)e.remove();'ok'", null)
         })
         inner.addView(btnRow)
@@ -1504,6 +1510,7 @@ class DevToolsOverlay(
             val row = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(4), dp(6), dp(4), dp(6))
+                background = rippleRect(Color.TRANSPARENT, 0f)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 1 }
                 setOnClickListener { showRequestDetail(req) }
                 setOnLongClickListener { activity.copyToClipboard(req.url, "URL copied"); true }
@@ -1526,20 +1533,22 @@ class DevToolsOverlay(
         inner.addView(buildSectionHeader("🌐 HTTP Proxy"))
         val curH = System.getProperty("http.proxyHost") ?: ""; val curP = System.getProperty("http.proxyPort") ?: ""
         inner.addView(buildMonoTv(if (curH.isNotBlank()) "Proxy ON: $curH:$curP" else "Proxy: OFF", if (curH.isNotBlank()) ACCENT else TEXT_DIM, 11f).apply { setPadding(0,0,0,dp(8)) })
-        val etHost = buildEditText("Proxy host (vd: 192.168.1.100)").apply {
+        val (hostWrap, etHost) = buildLabeledInput("Proxy host", "vd: 192.168.1.100")
+        etHost.apply {
             setText(curH)
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         }
-        val etPort = buildEditText("Port (vd: 8888)").apply {
+        val (portWrap, etPort) = buildLabeledInput("Port", "vd: 8888")
+        etPort.apply {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER; setText(curP)
         }
-        inner.addView(etHost); inner.addView(etPort)
+        inner.addView(hostWrap); inner.addView(portWrap)
         val btnRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
         btnRow.addView(buildActionBtn("✅ Set", ACCENT) {
             val h = etHost.text.toString().trim(); val p = etPort.text.toString().trim().toIntOrNull() ?: 0
             activity.setHttpProxy(h, p); showTab(9)
         })
-        btnRow.addView(buildActionBtn("🗑 Clear", Color.parseColor("#EF4444")) { activity.setHttpProxy("", 0); showTab(9) })
+        btnRow.addView(buildActionBtn("🗑 Clear", DANGER) { activity.setHttpProxy("", 0); showTab(9) })
         inner.addView(btnRow)
         inner.addView(vDivider())
         inner.addView(buildSectionHeader("Quick Setup — Charles Port 8888 · Burp Port 8080"))
@@ -1554,7 +1563,7 @@ class DevToolsOverlay(
         val inner = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(16)); setBackgroundColor(BG_PANEL) }
         inner.addView(buildMonoTv(req.url, typeColor(req.tag), 10.5f).apply { setTextIsSelectable(true) })
         if (req.url.contains(".m3u8")) {
-            inner.addView(buildActionBtn("🎞 Xem chất lượng (quality variants)", Color.parseColor("#AB47BC")) {
+            inner.addView(buildActionBtn("🎞 Xem chất lượng (quality variants)", ACCENT) {
                 toast("Đang tải m3u8...")
                 scope.launch {
                     val result = withContext(Dispatchers.IO) {
@@ -1682,10 +1691,38 @@ class DevToolsOverlay(
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6) }
     }
 
+    /** Fix: buildEditText's hint disappears the moment the user starts typing — for lookalike
+     *  fields (Key/IV/Ciphertext) this loses context mid-entry. Wraps the same EditText with a
+     *  small always-visible label above it, reusing buildEditText so visual styling is unchanged. */
+    private fun buildLabeledInput(label: String, hint: String = ""): Pair<View, EditText> {
+        val wrap = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6) }
+        }
+        wrap.addView(TextView(context).apply {
+            text = label; textSize = 9f; setTextColor(TEXT_SEC)
+            setPadding(dp(2), 0, 0, dp(3))
+        })
+        val et = buildEditText(hint).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        wrap.addView(et)
+        return wrap to et
+    }
+
+    private fun rippleRect(baseColor: Int, cornerDp: Float): android.graphics.drawable.Drawable {
+        val content = roundRect(baseColor, cornerDp)
+        val rippleColor = android.content.res.ColorStateList.valueOf(
+            if (isColorDark(baseColor)) Color.argb(90, 255, 255, 255) else Color.argb(70, 0, 0, 0)
+        )
+        val mask = roundRect(Color.WHITE, cornerDp)
+        return android.graphics.drawable.RippleDrawable(rippleColor, content, mask)
+    }
+
     private fun buildActionBtn(label: String, color: Int, action: (() -> Unit)? = null) = TextView(context).apply {
         text = label; textSize = 10.5f
         setTextColor(if (isColorDark(color)) Color.WHITE else Color.BLACK)
-        background = roundRect(color, 5f)
+        background = rippleRect(color, 5f)
         setPadding(dp(12), dp(5), dp(12), dp(5))
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(4); topMargin = dp(4) }
         action?.let { setOnClickListener { it() } }
