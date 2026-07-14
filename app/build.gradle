@@ -27,6 +27,9 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = '17' }
+    testOptions {
+        unitTests { isReturnDefaultValues = true }
+    }
 }
 
 dependencies {
@@ -67,6 +70,9 @@ dependencies {
     implementation 'com.google.dagger:hilt-android:2.51.1'
     kapt 'com.google.dagger:hilt-compiler:2.51.1'
     implementation 'androidx.hilt:hilt-navigation-fragment:1.2.0'
+
+    // Test — project had 0 test dependencies before this
+    testImplementation 'junit:junit:4.13.2'
 }
 
 kapt {

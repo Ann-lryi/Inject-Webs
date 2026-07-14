@@ -42,6 +42,7 @@ import com.aho.streambrowser.detector.StreamJsBridge
 import com.aho.streambrowser.model.StreamItem
 import com.aho.streambrowser.model.TabManager
 import com.aho.streambrowser.util.Constants
+import com.aho.streambrowser.util.CrashHandler
 import com.aho.streambrowser.util.RequestBlocker
 import com.aho.streambrowser.util.UserAgentManager
 import com.aho.streambrowser.viewmodel.BrowserViewModel
@@ -68,6 +69,7 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashHandler.install(this)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         b = ActivityMainBinding.inflate(layoutInflater)
         setContentView(b.root)
@@ -402,6 +404,11 @@ class MainActivity : AppCompatActivity() {
         items.add("+ New Tab"); actions.add { openNewTab() }
         items.add("📑 All Tabs"); actions.add { showTabManager() }
         items.add("🎯 Element Picker"); actions.add { activatePicker() }
+        items.add("🩺 Copy Crash Log"); actions.add {
+            val text = CrashHandler.latestLogText(this)
+            if (text == null) Toast.makeText(this, "Chưa có crash log nào", Toast.LENGTH_SHORT).show()
+            else copyToClipboard(text, "Đã copy crash log gần nhất")
+        }
         items.add("🗑 Clear Session"); actions.add { detector.clear(); updateFab() }
         items.add(if (isIncognito) "🔓 Exit Incognito" else "🕵 Incognito"); actions.add { toggleIncognito() }
         items.add(if (isDesktopMode) "📱 Mobile" else "🖥 Desktop"); actions.add { toggleDesktopMode() }

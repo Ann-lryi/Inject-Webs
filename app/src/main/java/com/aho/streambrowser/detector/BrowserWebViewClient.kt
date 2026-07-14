@@ -100,7 +100,7 @@ class BrowserWebViewClient(
 
     private fun injectJavaScript(view: WebView) {
         try {
-            val js = HOOK_JS.replace("%(PROTECTED_DOMAINS)s",
+            val js = loadHookJs(view.context).replace("%(PROTECTED_DOMAINS)s",
                 PROTECTED_DOMAINS.joinToString(",", "[", "]") { "\"$it\"" })
             view.evaluateJavascript(js) { result ->
                 if (result != "null" && result != null) {
