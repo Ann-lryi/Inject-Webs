@@ -4,7 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0A0A0A">
+    android:background="@drawable/bg_app_root">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -18,25 +18,25 @@
             android:layout_height="wrap_content"
             android:minHeight="52dp"
             android:orientation="vertical"
-            android:background="#141414"
-            android:elevation="6dp">
+            android:background="@drawable/bg_toolbar_glass"
+            android:elevation="12dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="52dp"
+                android:layout_height="60dp"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
-                android:paddingHorizontal="4dp">
+                android:paddingHorizontal="10dp">
 
                 <ImageButton android:id="@+id/btnBack"
-                    android:layout_width="38dp" android:layout_height="38dp"
+                    android:layout_width="42dp" android:layout_height="42dp"
                     android:src="@drawable/ic_arrow_back"
                     android:background="@drawable/bg_icon_btn"
                     android:enabled="false" android:alpha="0.3"
                     android:scaleType="center" android:contentDescription="Back"/>
 
                 <ImageButton android:id="@+id/btnForward"
-                    android:layout_width="38dp" android:layout_height="38dp"
+                    android:layout_width="42dp" android:layout_height="42dp"
                     android:src="@drawable/ic_arrow_forward"
                     android:background="@drawable/bg_icon_btn"
                     android:enabled="false" android:alpha="0.3"
@@ -44,16 +44,16 @@
                     android:layout_marginStart="2dp"/>
 
                 <LinearLayout
-                    android:layout_width="0dp" android:layout_height="36dp"
+                    android:layout_width="0dp" android:layout_height="44dp"
                     android:layout_weight="1"
-                    android:layout_marginHorizontal="4dp"
+                    android:layout_marginHorizontal="8dp"
                     android:background="@drawable/bg_url_bar_v2"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:paddingStart="8dp" android:paddingEnd="2dp">
+                    android:paddingStart="12dp" android:paddingEnd="6dp">
 
                     <ImageView android:id="@+id/ivSecure"
-                        android:layout_width="13dp" android:layout_height="13dp"
+                        android:layout_width="15dp" android:layout_height="15dp"
                         android:src="@drawable/ic_lock" android:alpha="0.5"
                         android:layout_marginEnd="4dp"/>
 
@@ -62,9 +62,9 @@
                         android:layout_weight="1"
                         android:background="@null" android:inputType="textUri"
                         android:imeOptions="actionGo|flagNoExtractUi"
-                        android:singleLine="true" android:textSize="11.5sp"
-                        android:textColor="#E0E0E0" android:hint="Tìm kiếm hoặc nhập URL"
-                        android:textColorHint="#555" android:selectAllOnFocus="true"/>
+                        android:singleLine="true" android:textSize="14sp"
+                        android:textColor="@color/text_primary" android:hint="Tìm kiếm hoặc nhập URL"
+                        android:textColorHint="@color/text_muted" android:selectAllOnFocus="true"/>
 
                     <ImageButton android:id="@+id/btnRefresh"
                         android:layout_width="30dp" android:layout_height="30dp"
@@ -74,14 +74,14 @@
                 </LinearLayout>
 
                 <ImageButton android:id="@+id/btnDesktop"
-                    android:layout_width="38dp" android:layout_height="38dp"
+                    android:layout_width="42dp" android:layout_height="42dp"
                     android:src="@drawable/ic_home"
                     android:background="@drawable/bg_icon_btn"
                     android:alpha="0.5"
                     android:scaleType="center" android:contentDescription="Desktop"/>
 
                 <ImageButton android:id="@+id/btnBookmark"
-                    android:layout_width="38dp" android:layout_height="38dp"
+                    android:layout_width="42dp" android:layout_height="42dp"
                     android:src="@drawable/ic_bookmark"
                     android:background="@drawable/bg_icon_btn"
                     android:scaleType="center" android:contentDescription="Bookmark"/>
@@ -93,8 +93,8 @@
         <HorizontalScrollView
             android:id="@+id/tabScrollView"
             android:layout_width="match_parent"
-            android:layout_height="32dp"
-            android:background="#0F0F0F"
+            android:layout_height="42dp"
+            android:background="@color/bg_browser"
             android:scrollbars="none"
             android:overScrollMode="never"
             android:visibility="gone">
@@ -105,16 +105,16 @@
                 android:layout_height="match_parent"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
-                android:paddingHorizontal="4dp"/>
+                android:paddingHorizontal="10dp"/>
 
         </HorizontalScrollView>
 
         <!-- Progress -->
         <ProgressBar android:id="@+id/progressBar"
             style="@style/Widget.AppCompat.ProgressBar.Horizontal"
-            android:layout_width="match_parent" android:layout_height="2dp"
-            android:max="100" android:progressTint="#1D9E75"
-            android:progressBackgroundTint="#1A1A1A" android:visibility="gone"/>
+            android:layout_width="match_parent" android:layout_height="3dp"
+            android:max="100" android:progressTint="@color/accent_green"
+            android:progressBackgroundTint="@color/surface2" android:visibility="gone"/>
 
         <!-- SwipeRefresh + WebView -->
         <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
@@ -136,16 +136,16 @@
         android:id="@+id/btnDevTools"
         android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:layout_gravity="bottom|end" android:layout_margin="16dp"
-        android:text="DevTools" android:textSize="12sp" android:textColor="#FFF"
+        android:text="Stream Lab" android:textSize="13sp" android:textStyle="bold" android:textColor="#FFF"
         app:icon="@drawable/ic_devtools" app:iconTint="#FFF"
-        app:backgroundTint="#1D9E75" app:elevation="8dp"/>
+        app:backgroundTint="@color/accent_green" app:elevation="12dp"/>
 
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/btnPickerFloat"
         android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:layout_gravity="bottom|start" android:layout_margin="16dp"
         android:src="@drawable/ic_picker" android:contentDescription="Picker"
-        app:backgroundTint="#E24B4A" app:tint="#FFF"
+        app:backgroundTint="@color/accent_pink" app:tint="#FFF"
         app:elevation="8dp" android:visibility="gone"/>
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
