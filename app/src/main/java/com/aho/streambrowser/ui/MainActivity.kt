@@ -10,6 +10,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.view.animation.OvershootInterpolator
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -91,10 +92,35 @@ class MainActivity : AppCompatActivity() {
         setupButtons()
         setupBackHandler()
         setupDetector()
+        setupMotion()
         observeViewModel()    // H2: observe StateFlow
         renderTabStrip()
 
         b.webView.loadUrl(Constants.DEFAULT_HOME_URL)
+    }
+
+
+    private fun setupMotion() {
+        b.toolbar.alpha = 0f
+        b.toolbar.translationY = -18f * resources.displayMetrics.density
+        b.toolbar.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(420L)
+            .setInterpolator(OvershootInterpolator(0.8f))
+            .start()
+
+        listOf(b.btnDevTools, b.btnPickerFloat).forEachIndexed { index, fab ->
+            fab.scaleX = 0.86f
+            fab.scaleY = 0.86f
+            fab.animate()
+                .scaleX(1f)
+                .scaleY(1f)
+                .setStartDelay(120L + index * 80L)
+                .setDuration(360L)
+                .setInterpolator(OvershootInterpolator())
+                .start()
+        }
     }
 
     // H2: Observe StateFlow from ViewModel
@@ -164,7 +190,7 @@ class MainActivity : AppCompatActivity() {
                 renderTabStrip()
             }}
         )
-        b.swipeRefresh.setColorSchemeColors(0xFF1D9E75.toInt())
+        b.swipeRefresh.setColorSchemeColors(0xFF24D29B.toInt(), 0xFF5B8CFF.toInt())
         b.swipeRefresh.setOnRefreshListener {
             b.webView.reload()
             b.swipeRefresh.postDelayed({ b.swipeRefresh.isRefreshing = false }, 500)
@@ -247,30 +273,33 @@ class MainActivity : AppCompatActivity() {
             val chip = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity     = android.view.Gravity.CENTER_VERTICAL
-                setPadding((8*dp).toInt(), 0, (4*dp).toInt(), 0)
+                setPadding((12*dp).toInt(), 0, (6*dp).toInt(), 0)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = (2*dp).toInt() }
-                setBackgroundColor(if (isCurrent) Color.parseColor("#1D9E75") else Color.parseColor("#1E1E1E"))
+                    LinearLayout.LayoutParams.MATCH_PARENT).apply { marginEnd = (6*dp).toInt() }
+                setBackgroundResource(if (isCurrent) R.drawable.bg_tab_active else R.drawable.bg_tab_inactive)
+                elevation = if (isCurrent) 6f * dp else 0f
                 setOnClickListener { switchTab(idx) }
             }
             val label = TextView(this).apply {
                 text     = tab.title.take(14).ifBlank { tab.url.take(16).removePrefix("https://").removePrefix("http://") }
-                textSize = 10f
-                setTextColor(if (isCurrent) Color.WHITE else Color.parseColor("#AAAAAA"))
+                textSize = 11f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                setTextColor(if (isCurrent) Color.WHITE else Color.parseColor("#9AA8C0"))
                 maxLines = 1
             }
             val close = android.widget.ImageButton(this).apply {
                 setImageResource(R.drawable.ic_close); background = null
                 layoutParams = LinearLayout.LayoutParams((20*dp).toInt(), (20*dp).toInt())
-                setColorFilter(if (isCurrent) Color.WHITE else Color.parseColor("#888888"))
+                setColorFilter(if (isCurrent) Color.WHITE else Color.parseColor("#687892"))
                 setOnClickListener { closeTab(idx) }
             }
             chip.addView(label); chip.addView(close); strip.addView(chip)
         }
         val addBtn = TextView(this).apply {
-            text = " + "; textSize = 14f
-            setTextColor(Color.parseColor("#1D9E75")); gravity = android.view.Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams((32*dp).toInt(), LinearLayout.LayoutParams.MATCH_PARENT)
+            text = " + "; textSize = 18f
+            setTextColor(Color.parseColor("#24D29B")); gravity = android.view.Gravity.CENTER
+            setBackgroundResource(R.drawable.bg_tab_inactive)
+            layoutParams = LinearLayout.LayoutParams((42*dp).toInt(), (30*dp).toInt()).apply { marginEnd = (6*dp).toInt() }
             setOnClickListener { openNewTab() }
             setOnLongClickListener { showTabManager(); true }
         }
@@ -347,8 +376,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateNavButtons() {
-        b.btnBack.isEnabled    = b.webView.canGoBack();    b.btnBack.alpha    = if (b.webView.canGoBack()) 1f else 0.3f
-        b.btnForward.isEnabled = b.webView.canGoForward(); b.btnForward.alpha = if (b.webView.canGoForward()) 1f else 0.3f
+        b.btnBack.isEnabled    = b.webView.canGoBack();    b.btnBack.alpha    = if (b.webView.canGoBack()) 1f else 0.34f
+        b.btnForward.isEnabled = b.webView.canGoForward(); b.btnForward.alpha = if (b.webView.canGoForward()) 1f else 0.34f
     }
 
     private fun updateFab() {
@@ -358,8 +387,8 @@ class MainActivity : AppCompatActivity() {
         // Phục hồi logic nguyên thủy cho nút DevTools để không gây lỗi trùng lặp
         when { 
             s > 0 -> { b.btnDevTools.text = "● $s Stream"; b.btnDevTools.extend() }
-            r > 0 -> { b.btnDevTools.text = "DevTools ($r)"; b.btnDevTools.shrink() }
-            else -> { b.btnDevTools.text = "DevTools"; b.btnDevTools.shrink() } 
+            r > 0 -> { b.btnDevTools.text = "Lab ($r)"; b.btnDevTools.shrink() }
+            else -> { b.btnDevTools.text = "Stream Lab"; b.btnDevTools.shrink() }
         }
     }
 
@@ -380,10 +409,10 @@ class MainActivity : AppCompatActivity() {
             CookieManager.getInstance().removeAllCookies(null)
             b.webView.clearCache(true); b.webView.clearHistory()
             b.webView.settings.cacheMode = WebSettings.LOAD_NO_CACHE
-            b.toolbar.setBackgroundColor(Color.parseColor("#1A1A2A"))
+            b.toolbar.setBackgroundColor(Color.parseColor("#1E1830"))
         } else {
             b.webView.settings.cacheMode = WebSettings.LOAD_DEFAULT
-            b.toolbar.setBackgroundColor(Color.parseColor("#141414"))
+            b.toolbar.setBackgroundResource(R.drawable.bg_toolbar_glass)
         }
         Toast.makeText(this, if (isIncognito) "🕵 Incognito ON" else "🔓 OFF", Toast.LENGTH_SHORT).show()
     }
