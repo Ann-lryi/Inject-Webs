@@ -135,7 +135,7 @@ class BrowserWebViewClient(
     private fun fetchResponseAsync(url: String, headers: Map<String, String>, method: String) {
         if (method.uppercase() !in listOf("GET", "HEAD")) return
         // G3: Skip if at capacity — but allow stream URLs through at lower threshold
-        val isStream = url.contains(".m3u8") || url.contains(".mpd") || url.contains(".m3u9")
+        val isStream = url.contains(".m3u8") || url.contains(".m3u") || url.contains(".mpd") || url.contains(".m3u9")
         val limit = if (isStream) MAX_CONCURRENT else MAX_CONCURRENT - 2
         if (activeRequests.get() >= limit) {
             if (!capWarningLogged) {
@@ -170,6 +170,13 @@ class BrowserWebViewClient(
 
                 detector.requests.find { it.url == url }?.let { old ->
                     detector.updateRequest(url, old.withResponse(status, resHeaders, body, mime, size))
+                }
+                if (body.isNotBlank()) {
+                    if (isStream || mime.contains("mpegurl", ignoreCase = true) || mime.contains("dash+xml", ignoreCase = true)) {
+                        detector.scanManifestForStreams(url, body, "native_resp", currentUrl)
+                    } else if (mime.contains("json", ignoreCase = true) || mime.contains("javascript", ignoreCase = true) || mime.contains("text", ignoreCase = true)) {
+                        detector.scanTextForStreams(body, "native_resp", currentUrl)
+                    }
                 }
             } catch (_: Exception) {
             } finally {

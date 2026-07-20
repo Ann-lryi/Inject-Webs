@@ -7,6 +7,8 @@ import android.os.Vibrator
 import android.webkit.WebResourceRequest
 import com.aho.streambrowser.model.NetworkRequest
 import com.aho.streambrowser.model.StreamItem
+import com.aho.streambrowser.model.StreamQuality
+import com.aho.streambrowser.model.StreamType
 
 // ── Data classes ─────────────────────────────────────────────────────────────
 
@@ -73,6 +75,7 @@ class StreamDetector(private val context: Context? = null) {
     private val _activityLog    = mutableListOf<ActivityLogEntry>()
     private val _wasmSeen       = mutableSetOf<String>()
     private val _swSeen         = mutableSetOf<String>()
+    private val _pendingPayloads = mutableMapOf<String, Pair<Map<String, String>, String>>()
 
     val streams:        List<StreamItem>          get() = synchronized(this) { _streams.toList()        }
     val requests:       List<NetworkRequest>      get() = synchronized(this) { _requests.toList()       }
@@ -167,17 +170,132 @@ class StreamDetector(private val context: Context? = null) {
 
     /** Scan arbitrary text for stream URLs (used for WS messages, response bodies) */
     fun scanTextForStreams(text: String, source: String, pageUrl: String) {
+        val normalizedText = text
+            .replace("\\u0026", "&")
+            .replace("\\/", "/")
+            .replace("&amp;", "&")
         val patterns = listOf(
-            Regex("""(https?://[^\s"'<>]+\.m3u[89][^\s"'<>]*)"""),
-            Regex("""(https?://[^\s"'<>]+\.mpd[^\s"'<>]*)"""),
-            Regex("""(https?://[^\s"'<>]+\.mp4[^\s"'<>]*)""")
+            Regex("""((?:https?:)?//[^\s"'<>]+\.(?:m3u8?|m3u9|mpd|mp4|m4v|webm|mkv|flv)[^\s"'<>]*)""", RegexOption.IGNORE_CASE),
+            Regex("""["']([^"'<>\s]+\.(?:m3u8?|m3u9|mpd|mp4|m4v|webm|mkv|flv)(?:[^"'<>\s]*))["']""", RegexOption.IGNORE_CASE)
         )
         patterns.forEach { pat ->
-            pat.findAll(text).forEach { m ->
-                reportFromJs(m.groupValues[1], source, "GET", pageUrl)
+            pat.findAll(normalizedText).forEach { m ->
+                val raw = m.groupValues[1]
+                val absolute = when {
+                    raw.startsWith("//") -> "https:$raw"
+                    raw.startsWith("http://") || raw.startsWith("https://") -> raw
+                    pageUrl.startsWith("http") -> runCatching { java.net.URL(java.net.URL(pageUrl), raw).toString() }.getOrElse { raw }
+                    else -> raw
+                }
+                reportFromJs(absolute, source, "GET", pageUrl)
             }
         }
     }
+
+
+    fun scanManifestForStreams(manifestUrl: String, manifestBody: String, source: String, pageUrl: String) {
+        if (manifestBody.isBlank()) return
+        val base = runCatching { java.net.URL(manifestUrl) }.getOrNull() ?: return
+        val streamType = StreamItem.detectType(manifestUrl)
+        if (streamType != null) {
+            addStream(StreamItem(url = manifestUrl, type = streamType, source = source, referer = pageUrl))
+        }
+
+        var pendingVariantAttrs: Map<String, String>? = null
+        manifestBody.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .take(600)
+            .forEach { line ->
+                when {
+                    line.startsWith("#EXT-X-STREAM-INF", ignoreCase = true) -> {
+                        pendingVariantAttrs = parseManifestAttributes(line.substringAfter(':', ""))
+                    }
+                    line.startsWith("#EXT-X-MEDIA", ignoreCase = true) || line.startsWith("#EXT-X-KEY", ignoreCase = true) -> {
+                        extractManifestAttribute(line, "URI")?.let { uri ->
+                            val resolved = resolveUrl(base, uri)
+                            reportFromJs(resolved, "${source}_manifest_attr", "GET", pageUrl)
+                        }
+                    }
+                    !line.startsWith("#") -> {
+                        val resolved = resolveUrl(base, line)
+                        val childType = StreamItem.detectType(resolved)
+                        val variantAttrs = pendingVariantAttrs
+                        if (variantAttrs != null && childType != null) {
+                            addEnrichedStream(resolved, childType, "${source}_variant", pageUrl, variantAttrs)
+                        } else if (variantAttrs != null || childType != null) {
+                            reportFromJs(resolved, "${source}_manifest", "GET", pageUrl)
+                        }
+                        pendingVariantAttrs = null
+                    }
+                }
+            }
+        if (manifestBody.contains("<MPD", ignoreCase = true)) {
+            scanDashManifest(base, manifestBody, source, pageUrl)
+        }
+    }
+
+
+    private fun addEnrichedStream(
+        url: String,
+        type: StreamType,
+        source: String,
+        pageUrl: String,
+        attrs: Map<String, String>
+    ) {
+        val quality = qualityFromResolution(attrs["RESOLUTION"] ?: "")
+        val codec = attrs["CODECS"]?.takeIf { it.isNotBlank() }
+        val bitrate = attrs["AVERAGE-BANDWIDTH"]?.toIntOrNull() ?: attrs["BANDWIDTH"]?.toIntOrNull()
+        addRequest(NetworkRequest(url = url, method = "GET", headers = emptyMap(), pageUrl = pageUrl, isStream = true, streamType = type))
+        addStream(StreamItem(url = url, type = type, source = source, referer = pageUrl, quality = quality, codec = codec, bitrate = bitrate))
+    }
+
+    private fun qualityFromResolution(resolution: String): StreamQuality {
+        val height = resolution.substringAfter('x', "").toIntOrNull() ?: return StreamQuality.UNKNOWN
+        return when {
+            height >= 2160 -> StreamQuality.P4K
+            height >= 1440 -> StreamQuality.P1440
+            height >= 1080 -> StreamQuality.P1080
+            height >= 720 -> StreamQuality.P720
+            height >= 480 -> StreamQuality.P480
+            height >= 360 -> StreamQuality.P360
+            height >= 240 -> StreamQuality.P240
+            else -> StreamQuality.UNKNOWN
+        }
+    }
+
+    private fun scanDashManifest(base: java.net.URL, body: String, source: String, pageUrl: String) {
+        Regex("""<BaseURL>([^<]+)</BaseURL>""", RegexOption.IGNORE_CASE)
+            .findAll(body)
+            .map { it.groupValues[1].trim() }
+            .filter { it.isNotBlank() }
+            .take(80)
+            .forEach { value ->
+                val resolved = resolveUrl(base, value)
+                if (StreamItem.detectType(resolved) != null || resolved.startsWith("http")) {
+                    reportFromJs(resolved, "${source}_dash_baseurl", "GET", pageUrl)
+                }
+            }
+        scanTextForStreams(body, "${source}_dash", pageUrl)
+    }
+
+    private fun parseManifestAttributes(attrs: String): Map<String, String> {
+        val map = linkedMapOf<String, String>()
+        Regex("""([A-Z0-9-]+)=(?:"([^"]*)"|([^,]*))""", RegexOption.IGNORE_CASE)
+            .findAll(attrs)
+            .forEach { match -> map[match.groupValues[1].uppercase()] = match.groupValues[2].ifEmpty { match.groupValues[3] } }
+        return map
+    }
+
+    private fun extractManifestAttribute(line: String, name: String): String? {
+        val regex = Regex("""(?:^|,)${Regex.escape(name)}=(?:"([^"]+)"|([^,]+))""", RegexOption.IGNORE_CASE)
+        val match = regex.find(line) ?: return null
+        return match.groupValues.getOrNull(1)?.takeIf { it.isNotBlank() }
+            ?: match.groupValues.getOrNull(2)?.takeIf { it.isNotBlank() }
+    }
+
+    private fun resolveUrl(base: java.net.URL, value: String): String =
+        runCatching { java.net.URL(base, value.trim()).toString() }.getOrElse { value.trim() }
 
     fun addCryptoKey(capture: CryptoKeyCapture) {
         synchronized(this) {
@@ -210,29 +328,53 @@ class StreamDetector(private val context: Context? = null) {
      *  call-time — native WebResourceRequest can never expose a POST body, and the JS hook
      *  previously captured this data (xhr.__sb_headers, send(body)/init.body) then discarded it. */
     fun updateRequestPayload(url: String, headersJson: String, body: String) {
-        val old = synchronized(this) { _requests.find { it.url == url } } ?: return
-        val mergedHeaders = if (old.headers.isEmpty() && headersJson.isNotBlank()) {
-            try {
-                val obj = org.json.JSONObject(headersJson)
-                val map = LinkedHashMap<String, String>()
-                obj.keys().forEach { k -> map[k] = obj.optString(k, "") }
-                map
-            } catch (_: Exception) { old.headers }
-        } else old.headers
-        updateRequest(url, old.copy(
-            requestBody = if (body.isNotBlank()) body.take(4000) else old.requestBody,
-            headers = mergedHeaders
-        ))
+        val parsedHeaders = parseHeadersJson(headersJson)
+        val old = synchronized(this) { _requests.find { it.url == url } }
+        if (old == null) {
+            synchronized(this) { _pendingPayloads[url] = parsedHeaders to body.take(4000) }
+            return
+        }
+        updateRequest(url, old.withPayload(parsedHeaders, body))
     }
+
+
+    private fun parseHeadersJson(headersJson: String): Map<String, String> {
+        if (headersJson.isBlank()) return emptyMap()
+        return try {
+            val obj = org.json.JSONObject(headersJson)
+            val map = LinkedHashMap<String, String>()
+            obj.keys().forEach { k -> map[k] = obj.optString(k, "") }
+            map
+        } catch (_: Exception) { emptyMap() }
+    }
+
+    private fun NetworkRequest.withPayload(headersFromJs: Map<String, String>, body: String): NetworkRequest = copy(
+        requestBody = if (body.isNotBlank()) body.take(4000) else requestBody,
+        headers = if (headers.isEmpty() && headersFromJs.isNotEmpty()) headersFromJs else headers
+    )
 
     @Synchronized private fun addRequest(req: NetworkRequest) {
         // G2: Normalize URL for dedup — ignore timestamp/token query params
         val normalizedUrl = normalizeUrlForDedup(req.url)
-        if (_requests.any { normalizeUrlForDedup(it.url) == normalizedUrl }) return
-        _requests.add(0, req)
+        val duplicateIndex = _requests.indexOfFirst { normalizeUrlForDedup(it.url) == normalizedUrl }
+        if (duplicateIndex >= 0) {
+            _requests[duplicateIndex] = _requests[duplicateIndex].mergeWithRicher(req)
+            return
+        }
+        val payload = _pendingPayloads.remove(req.url)
+        val enrichedReq = payload?.let { req.withPayload(it.first, it.second) } ?: req
+        _requests.add(0, enrichedReq)
         if (_requests.size > 500) _requests.removeAt(_requests.lastIndex)
-        onRequestAdded?.invoke(req)
+        onRequestAdded?.invoke(enrichedReq)
     }
+
+    private fun NetworkRequest.mergeWithRicher(candidate: NetworkRequest): NetworkRequest = copy(
+        headers = if (headers.isEmpty() && candidate.headers.isNotEmpty()) candidate.headers else headers,
+        isStream = isStream || candidate.isStream,
+        streamType = streamType ?: candidate.streamType,
+        requestBody = requestBody.ifBlank { candidate.requestBody },
+        referer = referer.ifBlank { candidate.referer }
+    )
 
     private fun normalizeUrlForDedup(url: String): String {
         return try {
@@ -248,7 +390,17 @@ class StreamDetector(private val context: Context? = null) {
     }
 
     @Synchronized private fun addStream(item: StreamItem) {
-        if (_streams.any { it.url == item.url }) return
+        val existingIndex = _streams.indexOfFirst { it.url == item.url }
+        if (existingIndex >= 0) {
+            val existing = _streams[existingIndex]
+            val upgraded = existing.mergeWithRicher(item)
+            if (upgraded != existing) {
+                _streams[existingIndex] = upgraded
+                addLog("info", "Stream enriched: ${upgraded.displayName} (via ${item.source})", "stream")
+                onStreamFound?.invoke(upgraded)
+            }
+            return
+        }
         _streams.add(0, item)
         val fileName = item.url.substringBefore("?").substringAfterLast("/").take(40)
         addLog("success", "Stream found: $fileName (via ${item.source})", "stream")
@@ -256,8 +408,23 @@ class StreamDetector(private val context: Context? = null) {
         vibrate()
     }
 
+    private fun StreamItem.mergeWithRicher(candidate: StreamItem): StreamItem = copy(
+        source = mergeSource(source, candidate.source),
+        referer = referer.ifBlank { candidate.referer },
+        quality = if (quality == StreamQuality.UNKNOWN) candidate.quality else quality,
+        codec = codec ?: candidate.codec,
+        bitrate = bitrate ?: candidate.bitrate
+    )
+
+    private fun mergeSource(old: String, new: String): String = when {
+        old.isBlank() -> new
+        new.isBlank() || old == new -> old
+        old.contains(new) -> old
+        else -> "$old+$new"
+    }
+
     fun clear() = synchronized(this) {
-        _streams.clear(); _requests.clear()
+        _streams.clear(); _requests.clear(); _pendingPayloads.clear()
         _cryptoKeys.clear(); _responseBodies.clear()
         _wsMessages.clear(); _activityLog.clear()
     }

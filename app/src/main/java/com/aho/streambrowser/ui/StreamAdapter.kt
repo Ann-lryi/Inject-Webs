@@ -29,8 +29,11 @@ class StreamAdapter(
         }
         
         fun bind(item: StreamItem) {
-            b.tvType.text   = item.label
-            b.tvSource.text = "via ${item.source}"
+            b.tvType.text   = item.displayName.ifBlank { item.label }
+            b.tvSource.text = buildString {
+                append("via ${item.source}")
+                item.bitrate?.takeIf { it > 0 }?.let { append(" • ${it / 1000}kbps") }
+            }
             b.tvUrl.text    = item.url
             // Enable text selection on URL
             b.tvUrl.setTextIsSelectable(true)

@@ -110,11 +110,24 @@
     // ── Utilities ────────────────────────────────────────────────────────────
     function normalizeUrl(url) {
         if (!url || typeof url !== 'string') return null;
-        url = url.trim();
-        if (url.startsWith('//')) url = location.protocol + url;
+        url = url.trim()
+            .replace(/\\u0026/g, '&')
+            .replace(/\\\//g, '/')
+            .replace(/&amp;/g, '&');
+        if (!url) return null;
         if (url.startsWith('blob:')) return url;
-        if (!url.match(/^https?:\/\//i)) return null;
-        return url;
+        try { return new URL(url, location.href).href; } catch(e) {}
+        return null;
+    }
+
+    function looksLikeStreamPath(url) {
+        return /(?:\.m3u8?|\.m3u9|\.mpd|\.mp4|\.m4v|\.webm|\.mkv|\.flv)(?:[?#]|$)/i.test(url) ||
+               /(?:manifest|master|playlist|chunklist|index)\b/i.test(url);
+    }
+
+    function reportCandidate(url, source, method) {
+        var normalized = normalizeUrl(url);
+        if (normalized && looksLikeStreamPath(normalized)) report(normalized, source, method || 'GET');
     }
 
     function report(url, source, method) {
@@ -142,18 +155,16 @@
 
     function extractUrls(text, source) {
         if (!text || typeof text !== 'string' || text.length > 500000) return;
+        text = text.replace(/\\u0026/g, '&').replace(/\\\//g, '/').replace(/&amp;/g, '&');
         var pats = [
-            /\b(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/gi,
-            /\b(https?:\/\/[^\s"'<>]+\.mpd[^\s"'<>]*)/gi,
-            /\b(https?:\/\/[^\s"'<>]+\.mp4[^\s"'<>]*)/gi,
-            /\b(https?:\/\/[^\s"'<>]+\.webm[^\s"'<>]*)/gi,
-            /\b(https?:\/\/[^\s"'<>]+\.flv[^\s"'<>]*)/gi,
-            /"(https?:\/\/[^"]+\.(?:m3u8|mpd|mp4|webm|flv)[^"]*)"/gi
+            /\b((?:https?:)?\/\/[^\s"'<>]+\.(?:m3u8?|m3u9|mpd|mp4|m4v|webm|mkv|flv)[^\s"'<>]*)/gi,
+            /["']([^"'<>\s]+\.(?:m3u8?|m3u9|mpd|mp4|m4v|webm|mkv|flv)(?:[^"'<>\s]*))["']/gi,
+            /["']([^"'<>\s]*(?:manifest|master|playlist|chunklist|index)[^"'<>\s]*)["']/gi
         ];
         pats.forEach(function(pat) {
             try {
                 var r = new RegExp(pat.source, pat.flags), m;
-                while ((m = r.exec(text)) !== null) { if (m[1]) report(m[1], 'extract_' + source, 'GET'); }
+                while ((m = r.exec(text)) !== null) { if (m[1]) reportCandidate(m[1], 'extract_' + source, 'GET'); }
             } catch(e) {}
         });
     }
@@ -275,8 +286,8 @@
         Element.prototype.setAttribute = N(function(n, v) {
             var r = origSetAttr.apply(this, arguments);
             if ((this.tagName === 'VIDEO' || this.tagName === 'AUDIO' || this.tagName === 'SOURCE') &&
-                (n === 'src' || n.startsWith('data-')) && v && v.startsWith('http')) {
-                report(v, 'attr_' + n, 'GET');
+                (n === 'src' || n.startsWith('data-')) && v) {
+                reportCandidate(v, 'attr_' + n, 'GET');
             }
             return r;
         });
@@ -543,7 +554,7 @@
             });
             nodes.forEach(function(n) {
                 var src = n.src || n.getAttribute('src') || n.getAttribute('data-src') || n.getAttribute('data-hls');
-                if (src && src.startsWith('http')) report(src, 'mutation_' + n.tagName.toLowerCase(), 'GET');
+                if (src) reportCandidate(src, 'mutation_' + n.tagName.toLowerCase(), 'GET');
                 if (n.tagName === 'IFRAME') {
                     tryHookIframe(n);
                     n.addEventListener('load', function() { tryHookIframe(n); });
@@ -574,7 +585,7 @@
                         m.addedNodes.forEach(function(n) {
                             if (n.nodeType !== 1) return;
                             var src = n.src || n.getAttribute('src');
-                            if (src && src.startsWith('http')) report(src, 'shadow_dom', 'GET');
+                            if (src) reportCandidate(src, 'shadow_dom', 'GET');
                         });
                     });
                 });
@@ -747,7 +758,7 @@
         });
         document.querySelectorAll('video,audio').forEach(function(v) {
             var src = v.src || v.getAttribute('src') || v.currentSrc;
-            if (src && src.startsWith('http') && !src.startsWith('blob:')) report(src, 'deep_media', 'GET');
+            if (src && !src.startsWith('blob:')) reportCandidate(src, 'deep_media', 'GET');
         });
         // Scan common state stores
         try { if (window.__NEXT_DATA__) extractUrls(JSON.stringify(window.__NEXT_DATA__), 'next_data'); } catch(e) {}
@@ -764,11 +775,11 @@
         document.querySelectorAll('script:not([src])').forEach(function(s) { extractUrls(s.textContent, 'init_script'); });
         document.querySelectorAll('video,audio').forEach(function(v) {
             var src = v.src || v.getAttribute('src') || v.currentSrc;
-            if (src && src.startsWith('http')) report(src, 'init_media', 'GET');
+            if (src) reportCandidate(src, 'init_media', 'GET');
         });
         document.querySelectorAll('[data-video],[data-src],[data-hls],[data-m3u8]').forEach(function(el) {
             var src = el.getAttribute('data-video') || el.getAttribute('data-src') || el.getAttribute('data-hls') || el.getAttribute('data-m3u8');
-            if (src && src.startsWith('http')) report(src, 'init_data_attr', 'GET');
+            if (src) reportCandidate(src, 'init_data_attr', 'GET');
         });
         scanIframesForHooks();
     }
