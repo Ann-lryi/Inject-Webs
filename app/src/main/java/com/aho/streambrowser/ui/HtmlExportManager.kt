@@ -171,6 +171,17 @@ class HtmlExportManager(
                 for (var c=0;c<srcCanvases.length && c<dstCanvases.length;c++) {
                   try { var image=document.createElement('img'); image.src=srcCanvases[c].toDataURL(); image.setAttribute('data-sb-original','canvas'); dstCanvases[c].replaceWith(image); } catch(e) {}
                 }
+                // Media playback state lives in browser objects rather than markup. Preserve useful
+                // live metadata even when the source is a MediaSource/blob URL.
+                var srcMedia=all(source,'video,audio'), dstMedia=all(clone,'video,audio');
+                for (var m=0;m<srcMedia.length && m<dstMedia.length;m++) {
+                  var media=srcMedia[m], copy=dstMedia[m];
+                  copy.setAttribute('data-sb-current-src', media.currentSrc || media.src || '');
+                  copy.setAttribute('data-sb-current-time', String(media.currentTime || 0));
+                  copy.setAttribute('data-sb-duration', String(media.duration || ''));
+                  copy.setAttribute('data-sb-paused', String(media.paused));
+                  copy.setAttribute('data-sb-muted', String(media.muted));
+                }
                 var srcAll=all(source,'*'), dstAll=all(clone,'*');
                 for (var n=0;n<srcAll.length && n<dstAll.length;n++) {
                   var shadow=srcAll[n].shadowRoot;
