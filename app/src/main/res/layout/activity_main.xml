@@ -140,12 +140,21 @@
         app:icon="@drawable/ic_devtools" app:iconTint="#FFF"
         app:backgroundTint="@color/accent_green" app:elevation="12dp"/>
 
+    <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
+        android:id="@+id/btnExportHtml"
+        android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start" android:layout_margin="16dp"
+        android:layout_marginBottom="80dp"
+        android:text="Xuất HTML" android:textSize="12sp" android:textColor="#FFF"
+        app:icon="@drawable/ic_devtools" app:iconTint="#FFF"
+        app:backgroundTint="@color/accent_blue" app:elevation="8dp"/>
+
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/btnPickerFloat"
         android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:layout_gravity="bottom|start" android:layout_margin="16dp"
         android:src="@drawable/ic_picker" android:contentDescription="Picker"
         app:backgroundTint="@color/accent_pink" app:tint="#FFF"
-        app:elevation="8dp" android:visibility="gone"/>
+        app:elevation="8dp"/>
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

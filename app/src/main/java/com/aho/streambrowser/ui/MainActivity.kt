@@ -54,6 +54,7 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
 
     private lateinit var b: ActivityMainBinding
+    private lateinit var htmlExporter: HtmlExportManager
     private var webViewClient: BrowserWebViewClient? = null
 
     // H2: ViewModel injected by Hilt
@@ -84,9 +85,14 @@ class MainActivity : AppCompatActivity() {
                     it.bottomMargin = dp16 + bars.bottom; fab.requestLayout()
                 }
             }
+            (b.btnExportHtml.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams)?.let {
+                it.bottomMargin = (80 * resources.displayMetrics.density).toInt() + bars.bottom
+                b.btnExportHtml.requestLayout()
+            }
             WindowInsetsCompat.CONSUMED
         }
 
+        htmlExporter = HtmlExportManager(this, b.webView)
         setupWebView()
         setupAddressBar()
         setupButtons()
@@ -110,7 +116,7 @@ class MainActivity : AppCompatActivity() {
             .setInterpolator(OvershootInterpolator(0.8f))
             .start()
 
-        listOf(b.btnDevTools, b.btnPickerFloat).forEachIndexed { index, fab ->
+        listOf(b.btnDevTools, b.btnPickerFloat, b.btnExportHtml).forEachIndexed { index, fab ->
             fab.scaleX = 0.86f
             fab.scaleY = 0.86f
             fab.animate()
@@ -175,6 +181,10 @@ class MainActivity : AppCompatActivity() {
         b.webView.addJavascriptInterface(
             StreamJsBridge(detector) { b.webView.url ?: "" }, "SBridge"
         )
+        htmlExporter.installBridge()
+        ElementPickerManager.install(b.webView) { html, selector ->
+            htmlExporter.showSelectedHtml(html, selector)
+        }
         webViewClient = BrowserWebViewClient(
             detector       = detector,
             blocker        = blocker,
@@ -251,13 +261,8 @@ class MainActivity : AppCompatActivity() {
         b.btnBookmark.setOnLongClickListener { showBookmarkHistory(); true }
         b.btnDevTools.setOnClickListener     { openDevTools() }
         b.btnDevTools.setOnLongClickListener { showQuickActions(); true }
-        b.btnPickerFloat.setOnClickListener {
-            ElementPickerManager.toggle(
-                webView       = b.webView,
-                onActivated   = { Toast.makeText(this, "🎯 Chạm vào phần tử trên trang để chọn", Toast.LENGTH_SHORT).show() },
-                onDeactivated = {}
-            )
-        }
+        b.btnExportHtml.setOnClickListener { htmlExporter.exportLivePage() }
+        b.btnPickerFloat.setOnClickListener { toggleHtmlPicker() }
     }
 
     private fun setupDetector() {
@@ -350,6 +355,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun pageStarted(url: String) {
+        if (ElementPickerManager.isPickerActive()) ElementPickerManager.deactivate(b.webView)
         if (!b.etUrl.isFocused) b.etUrl.setText(url)
         b.progressBar.isVisible = true
         b.btnRefresh.setImageResource(R.drawable.ic_close)
@@ -432,7 +438,8 @@ class MainActivity : AppCompatActivity() {
         }}
         items.add("+ New Tab"); actions.add { openNewTab() }
         items.add("📑 All Tabs"); actions.add { showTabManager() }
-        items.add("🎯 Element Picker"); actions.add { activatePicker() }
+        items.add("📄 Xuất HTML đang hiển thị"); actions.add { htmlExporter.exportLivePage() }
+        items.add("🎯 Chọn vùng để xem / xuất HTML"); actions.add { activatePicker() }
         items.add("🩺 Copy Crash Log"); actions.add {
             val text = CrashHandler.latestLogText(this)
             if (text == null) Toast.makeText(this, "Chưa có crash log nào", Toast.LENGTH_SHORT).show()
@@ -519,7 +526,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    fun activatePicker() { b.btnPickerFloat.isVisible = true }
+    /** Opens the visible picker immediately; the FAB stays available for cancel/retry. */
+    fun activatePicker() {
+        b.btnPickerFloat.isVisible = true
+        if (!ElementPickerManager.isPickerActive()) toggleHtmlPicker()
+    }
+
+    private fun toggleHtmlPicker() {
+        ElementPickerManager.toggle(
+            webView = b.webView,
+            onActivated = {
+                b.btnPickerFloat.isVisible = true
+                Toast.makeText(this, "Chạm vào vùng trên trang để xem hoặc xuất HTML", Toast.LENGTH_LONG).show()
+            },
+            onDeactivated = { Toast.makeText(this, "Đã tắt chọn vùng", Toast.LENGTH_SHORT).show() }
+        )
+    }
 
     private fun hideKeyboard() {
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(b.etUrl.windowToken, 0)
@@ -533,5 +555,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause()   { super.onPause();   b.webView.onPause() }
     override fun onResume()  { super.onResume();  b.webView.onResume() }
-    override fun onDestroy() { webViewClient?.cleanup(); b.webView.apply { stopLoading(); clearHistory(); destroy() }; super.onDestroy() }
+    override fun onDestroy() {
+        if (ElementPickerManager.isPickerActive()) ElementPickerManager.deactivate(b.webView)
+        webViewClient?.cleanup()
+        b.webView.apply { stopLoading(); clearHistory(); destroy() }
+        super.onDestroy()
+    }
 }

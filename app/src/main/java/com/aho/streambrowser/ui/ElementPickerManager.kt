@@ -1,200 +1,86 @@
 package com.aho.streambrowser.ui
 
-import android.app.AlertDialog
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.graphics.Color
-import android.view.View
-import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
-import android.widget.*
 
-/**
- * Quản lý Element Picker hoàn toàn độc lập với DevTools sheet.
- * Picker FAB nổi trên màn hình, không bị ảnh hưởng khi đóng sheet.
- */
+/** Lightweight, page-local element picker. Its bridge is installed once per WebView. */
 object ElementPickerManager {
-
     private var isActive = false
+    private var onPicked: ((String, String) -> Unit)? = null
 
-    // JS cài picker vào trang – chỉ cài 1 lần, toggle qua __sb_picking
-    private val PICKER_JS = """
-(function() {
-    if (window.__sb_picker_installed) return 'already';
-    window.__sb_picker_installed = true;
-    var _lastEl = null;
-
-    function clearHighlight() {
-        if (_lastEl) {
-            _lastEl.style.outline = _lastEl.__sb_orig_outline || '';
-            _lastEl.style.outlineOffset = '';
-            _lastEl = null;
-        }
+    fun install(webView: WebView, callback: (html: String, selector: String) -> Unit) {
+        onPicked = callback
+        webView.addJavascriptInterface(PickerBridge(webView), "HtmlPickerBridge")
     }
 
-    document.addEventListener('mouseover', function(e) {
-        if (!window.__sb_picking) return;
-        clearHighlight();
-        _lastEl = e.target;
-        _lastEl.__sb_orig_outline = _lastEl.style.outline || '';
-        _lastEl.style.outline = '2px solid #FF4444';
-        _lastEl.style.outlineOffset = '1px';
-        e.stopPropagation();
-    }, true);
-
-    document.addEventListener('click', function(e) {
-        if (!window.__sb_picking) return;
-        e.preventDefault();
-        e.stopPropagation();
-        var el = e.target;
-        clearHighlight();
-        window.__sb_picking = false;
-
-        var html = el.outerHTML || '';
-        var tag  = el.tagName  || 'UNKNOWN';
-        var id   = el.id ? '#' + el.id : '';
-        var cls  = el.className && typeof el.className === 'string'
-                   ? '.' + el.className.trim().split(/\s+/).join('.')
-                   : '';
-        SBridge_picker.onPicked(html, tag + id + cls);
-    }, true);
-
-    return 'installed';
-})();
-""".trimIndent()
-
-    /** Gọi từ MainActivity khi nhấn FAB picker */
-    fun toggle(
-        webView: WebView,
-        onActivated: () -> Unit,
-        onDeactivated: () -> Unit
-    ) {
-        if (isActive) {
-            deactivate(webView, onDeactivated)
-        } else {
-            activate(webView, onActivated, onDeactivated)
-        }
+    fun toggle(webView: WebView, onActivated: () -> Unit, onDeactivated: () -> Unit) {
+        if (isActive) deactivate(webView, onDeactivated) else activate(webView, onActivated, onDeactivated)
     }
 
-    fun activate(
-        webView: WebView,
-        onActivated: () -> Unit,
-        onDeactivated: () -> Unit
-    ) {
+    fun activate(webView: WebView, onActivated: () -> Unit, onDeactivated: () -> Unit = {}) {
         isActive = true
         onActivated()
-
-        // Đăng ký bridge (safe nếu đã đăng ký)
-        try {
-            webView.addJavascriptInterface(
-                PickerBridge(webView.context, onDeactivated),
-                "SBridge_picker"
-            )
-        } catch (_: Exception) {}
-
-        // Cài JS rồi bật picker
-        webView.evaluateJavascript(PICKER_JS) { _ ->
-            webView.evaluateJavascript("window.__sb_picking = true;", null)
+        webView.evaluateJavascript(PICKER_JS) {
+            webView.evaluateJavascript("window.__sb_html_picking=true;", null)
         }
     }
 
-    fun deactivate(webView: WebView, onDeactivated: () -> Unit) {
+    fun deactivate(webView: WebView, onDeactivated: () -> Unit = {}) {
         isActive = false
-        webView.evaluateJavascript("window.__sb_picking = false;", null)
+        webView.evaluateJavascript("window.__sb_html_picking=false;window.__sb_html_clear&&window.__sb_html_clear();", null)
         onDeactivated()
     }
 
     fun isPickerActive() = isActive
 
-    // ── JS Bridge nhận kết quả từ trang ──────────────────────────────────────
-    class PickerBridge(
-        private val ctx: Context,
-        private val onDone: () -> Unit
-    ) {
-        @JavascriptInterface
-        fun onPicked(rawHtml: String, selector: String) {
-            val html = rawHtml
-                .replace("\\n", "\n")
-                .replace("\\t", "\t")
-                .replace("\\\"", "\"")
-                .replace("\\\\", "\\")
-                .replace("\\/", "/")
-
+    private class PickerBridge(private val webView: WebView) {
+        @JavascriptInterface fun onPicked(html: String, selector: String) {
+            // The bridge is visible to page JavaScript: reject abusive payloads before posting to UI.
+            if (!isActive) return
             isActive = false
-            (ctx as? android.app.Activity)?.runOnUiThread {
-                onDone()
-                showResultDialog(ctx, html, selector)
+            if (html.length > 4 * 1024 * 1024) {
+                webView.post { android.widget.Toast.makeText(webView.context, "Vùng chọn quá lớn (tối đa 4 MB)", android.widget.Toast.LENGTH_LONG).show() }
+                return
             }
+            webView.post { onPicked?.invoke(html, selector.take(1000)) }
         }
     }
 
-    // ── Dialog hiện HTML element đã chọn ─────────────────────────────────────
-    private fun showResultDialog(ctx: Context, html: String, selector: String) {
-        val layout = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        // Header info
-        val tvSelector = TextView(ctx).apply {
-            text = "Element: $selector"
-            setTextColor(Color.parseColor("#1D9E75"))
-            textSize = 11f
-            typeface = android.graphics.Typeface.MONOSPACE
-            setPadding(16.dp(ctx), 12.dp(ctx), 16.dp(ctx), 4.dp(ctx))
-        }
-        val tvSize = TextView(ctx).apply {
-            text = "${html.length} ký tự · ${String.format("%.1f", html.length / 1024f)} KB"
-            setTextColor(Color.parseColor("#888888"))
-            textSize = 10f
-            typeface = android.graphics.Typeface.MONOSPACE
-            setPadding(16.dp(ctx), 0, 16.dp(ctx), 8.dp(ctx))
-        }
-        layout.addView(tvSelector)
-        layout.addView(tvSize)
-
-        // Divider
-        layout.addView(View(ctx).apply {
-            setBackgroundColor(Color.parseColor("#2E2E2E"))
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1)
-        })
-
-        // HTML content
-        val scroll = ScrollView(ctx).apply {
-            setBackgroundColor(Color.parseColor("#0D0D0D"))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 400.dp(ctx)
-            )
-        }
-        val tvHtml = TextView(ctx).apply {
-            text = html
-            setTextColor(Color.parseColor("#00FF41"))
-            textSize = 11f
-            typeface = android.graphics.Typeface.MONOSPACE
-            setPadding(16.dp(ctx), 12.dp(ctx), 16.dp(ctx), 12.dp(ctx))
-            setTextIsSelectable(true)
-        }
-        scroll.addView(tvHtml)
-        layout.addView(scroll)
-
-        AlertDialog.Builder(ctx)
-            .setTitle("HTML Element")
-            .setView(layout)
-            .setPositiveButton("Copy All") { _, _ ->
-                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cm.setPrimaryClip(ClipData.newPlainText("html", html))
-                Toast.makeText(ctx, "Đã copy ${html.length} ký tự", Toast.LENGTH_SHORT).show()
-            }
-            .setNeutralButton("Copy 3KB đầu") { _, _ ->
-                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cm.setPrimaryClip(ClipData.newPlainText("html", html.take(3000)))
-                Toast.makeText(ctx, "Đã copy ${minOf(html.length, 3000)} ký tự", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("Đóng", null)
-            .show()
-    }
-
-    private fun Int.dp(ctx: Context) =
-        (this * ctx.resources.displayMetrics.density).toInt()
+    private val PICKER_JS = """
+        (function () {
+          if (window.__sb_html_picker_installed) return;
+          window.__sb_html_picker_installed=true;
+          var last=null, oldOutline='', oldOffset='';
+          window.__sb_html_clear=function(){
+            if(last){ last.style.outline=oldOutline; last.style.outlineOffset=oldOffset; last=null; }
+          };
+          function path(el) {
+            var p=[];
+            while(el && el.nodeType===1 && p.length<8) {
+              var s=el.tagName.toLowerCase();
+              if(el.id){ p.unshift(s+'#'+el.id); break; }
+              var cls=(typeof el.className==='string' ? el.className.trim().split(/\s+/).filter(Boolean).slice(0,2) : []);
+              if(cls.length) s+='.'+cls.join('.');
+              p.unshift(s); el=el.parentElement;
+            } return p.join(' > ');
+          }
+          document.addEventListener('pointerover',function(e){
+            if(!window.__sb_html_picking) return;
+            window.__sb_html_clear(); last=e.target; oldOutline=last.style.outline; oldOffset=last.style.outlineOffset;
+            last.style.outline='3px solid #ff3d71'; last.style.outlineOffset='2px';
+          },true);
+          document.addEventListener('click',function(e){
+            if(!window.__sb_html_picking) return;
+            e.preventDefault(); e.stopImmediatePropagation();
+            var el=e.target, selector=path(el); window.__sb_html_picking=false; window.__sb_html_clear();
+            try {
+              var clone=el.cloneNode(true);
+              if(el.tagName==='TEXTAREA') clone.textContent=el.value;
+              else if(el.tagName==='INPUT') { if(el.type==='checkbox'||el.type==='radio'){if(el.checked)clone.setAttribute('checked','');else clone.removeAttribute('checked');}else clone.setAttribute('value',el.value); }
+              else if(el.tagName==='OPTION') { if(el.selected)clone.setAttribute('selected','');else clone.removeAttribute('selected'); }
+              HtmlPickerBridge.onPicked(clone.outerHTML || '', selector);
+            } catch(err) {}
+          },true);
+        })();
+    """.trimIndent()
 }
