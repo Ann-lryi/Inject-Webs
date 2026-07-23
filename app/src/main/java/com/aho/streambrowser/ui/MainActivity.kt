@@ -92,7 +92,7 @@ class MainActivity : AppCompatActivity() {
             WindowInsetsCompat.CONSUMED
         }
 
-        htmlExporter = HtmlExportManager(this, b.webView)
+        htmlExporter = HtmlExportManager(this, b.webView, detector)
         setupWebView()
         setupAddressBar()
         setupButtons()
@@ -263,6 +263,7 @@ class MainActivity : AppCompatActivity() {
         b.btnDevTools.setOnLongClickListener { showQuickActions(); true }
         b.btnExportHtml.setOnClickListener { htmlExporter.exportLivePage() }
         b.btnPickerFloat.setOnClickListener { toggleHtmlPicker() }
+        b.btnPickerFloat.setOnLongClickListener { activateRegionPicker(); true }
     }
 
     private fun setupDetector() {
@@ -530,6 +531,13 @@ class MainActivity : AppCompatActivity() {
     fun activatePicker() {
         b.btnPickerFloat.isVisible = true
         if (!ElementPickerManager.isPickerActive()) toggleHtmlPicker()
+    }
+
+    private fun activateRegionPicker() {
+        if (ElementPickerManager.isPickerActive()) ElementPickerManager.deactivate(b.webView)
+        ElementPickerManager.activateRegion(b.webView) {
+            Toast.makeText(this, "Kéo để chọn một vùng HTML", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun toggleHtmlPicker() {
