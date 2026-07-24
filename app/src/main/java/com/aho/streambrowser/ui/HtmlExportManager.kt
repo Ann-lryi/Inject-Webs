@@ -220,9 +220,9 @@ class HtmlExportManager(
     }
 
     private fun redactText(text: String): String = text
-        .replace(Regex("(?i)(Bearer\s+)[A-Za-z0-9._~-]+"), "${'$'}1[REDACTED]")
-        .replace(Regex("\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+"), "[REDACTED_JWT]")
-        .replace(Regex("(?i)([?&](?:access_token|token|auth|authorization|cookie|session|password|secret|api[_-]?key)=)[^&#\s]+"), "${'$'}1[REDACTED]")
+        .replace(Regex("(?i)(Bearer\\s+)[A-Za-z0-9._~-]+"), "${'$'}1[REDACTED]")
+        .replace(Regex("\\beyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]+"), "[REDACTED_JWT]")
+        .replace(Regex("(?i)([?&](?:access_token|token|auth|authorization|cookie|session|password|secret|api[_-]?key)=)[^&#\\s]+"), "${'$'}1[REDACTED]")
 
     private fun copy(text: String) {
         val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
