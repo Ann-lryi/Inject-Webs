@@ -21,13 +21,12 @@ class StreamRepository @Inject constructor(
             streamType = item.type.name,
             source     = item.source
         ))
-        // Auto-cleanup: keep last 500
-        val count = dao.count()
-        if (count > 500) {
-            val old = dao.getRecent().lastOrNull()?.timestamp ?: return
-            dao.deleteOlderThan(old)
-        }
+        // Keep the newest 500 exactly. The old implementation only inspected 100 rows and
+        // could leave unbounded history behind after a long session.
+        if (dao.count() > HISTORY_LIMIT) dao.pruneToLimit(HISTORY_LIMIT)
     }
 
     suspend fun getRecent(): List<StreamHistoryEntity> = dao.getRecent()
+
+    private companion object { const val HISTORY_LIMIT = 500 }
 }

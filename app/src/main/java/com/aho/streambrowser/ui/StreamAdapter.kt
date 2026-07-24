@@ -3,6 +3,7 @@ package com.aho.streambrowser.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.app.AlertDialog
 import android.graphics.Color
 import android.view.LayoutInflater
 import android.view.ViewGroup
@@ -62,15 +63,34 @@ class StreamAdapter(
             // Tích hợp Nút Tải
             b.btnDownload.setOnClickListener {
                 if (item.type == com.aho.streambrowser.model.StreamType.HLS) {
-                    android.widget.Toast.makeText(b.root.context, "Bắt đầu tải M3U8 đa luồng...", android.widget.Toast.LENGTH_SHORT).show()
-                    com.aho.streambrowser.feature.downloader.hls.HlsDownloader.startDownload(
-                        b.root.context, 
-                        item, 
-                        "Downloaded_Video_${System.currentTimeMillis()}"
-                    )
+                    chooseHlsQuality(item)
                 } else {
                     android.widget.Toast.makeText(b.root.context, "Tính năng tải hiện chỉ hỗ trợ định dạng HLS (.m3u8)", android.widget.Toast.LENGTH_SHORT).show()
                 }
+            }
+        }
+
+        private fun chooseHlsQuality(item: StreamItem) {
+            val context = b.root.context
+            val start: (StreamItem) -> Unit = { selected ->
+                Toast.makeText(context, "Bắt đầu tải HLS…", Toast.LENGTH_SHORT).show()
+                com.aho.streambrowser.feature.downloader.hls.HlsDownloader.startDownload(
+                    context, selected, "Downloaded_Video_${System.currentTimeMillis()}"
+                )
+            }
+            Toast.makeText(context, "Đang đọc quality từ master playlist…", Toast.LENGTH_SHORT).show()
+            com.aho.streambrowser.feature.downloader.hls.HlsDownloader.inspectVariants(item) { variants ->
+                if (variants.isEmpty()) { start(item); return@inspectVariants }
+                val labels = mutableListOf("Tự động — cao nhất")
+                labels += variants.map { variant ->
+                    val resolution = variant.resolution ?: "không rõ độ phân giải"
+                    "$resolution · ${variant.bandwidth / 1000} kbps"
+                }
+                AlertDialog.Builder(context).setTitle("Chọn chất lượng HLS")
+                    .setItems(labels.toTypedArray()) { _, index ->
+                        start(if (index == 0) item else item.copy(url = variants[index - 1].url))
+                    }
+                    .setNegativeButton("Huỷ", null).show()
             }
         }
     }

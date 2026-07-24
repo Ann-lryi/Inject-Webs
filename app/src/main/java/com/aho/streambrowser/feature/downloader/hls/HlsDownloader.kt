@@ -11,7 +11,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
-import java.net.URI
+import java.util.UUID
 
 enum class DownloadStatus {
     IDLE, FETCHING_MANIFEST, DOWNLOADING_SEGMENTS, MERGING, SUCCESS, ERROR
@@ -52,42 +52,43 @@ object HlsDownloader {
         }
 
         downloadJob = CoroutineScope(Dispatchers.IO).launch {
+            var tempDir: File? = null
+            var partialOutput: File? = null
             try {
                 _downloadState.value = DownloadState(DownloadStatus.FETCHING_MANIFEST, message = "Đang phân tích M3U8 Manifest...")
                 
-                // 1. Tải và phân tích file m3u8
-                val request = Request.Builder().url(streamItem.url).build()
-                val response = client.newCall(request).execute()
-                if (!response.isSuccessful) throw Exception("Không thể tải m3u8: ${response.code}")
-                
-                val m3u8Content = response.body?.string() ?: throw Exception("Nội dung m3u8 trống")
-                
-                // BẮT LỖI BẢO MẬT (DRM/ENCRYPTION)
-                if (m3u8Content.contains("#EXT-X-KEY")) {
-                    throw Exception("Lỗi: Luồng HLS này đã bị Mã hóa (Encrypted). HlsDownloader hiện tại chỉ hỗ trợ luồng Clear-Text.")
+                // Resolve master playlists (best available bandwidth) and parse the clear HLS subset.
+                val cookie = android.webkit.CookieManager.getInstance().getCookie(streamItem.url).orEmpty()
+                val requestHeaders = buildRequestHeaders(streamItem, cookie)
+                var playlistUrl = streamItem.url
+                var playlist = HlsPlaylistResolver.Playlist()
+                for (depth in 0 until MAX_PLAYLIST_DEPTH) {
+                    val content = fetchPlaylist(playlistUrl, requestHeaders)
+                    playlist = HlsPlaylistResolver.parse(content, playlistUrl)
+                    playlist.unsupportedReason?.let { reason -> throw Exception(reason) }
+                    val variant = playlist.variants.maxByOrNull { it.bandwidth } ?: break
+                    if (depth == MAX_PLAYLIST_DEPTH - 1) throw Exception("Master playlist lồng quá sâu")
+                    playlistUrl = variant.url
                 }
-
-                // 2. Trích xuất danh sách các file phân mảnh (.ts)
-                val lines = m3u8Content.split("\n")
-                val segmentUrls = mutableListOf<String>()
-                
-                for (line in lines) {
-                    val trimmed = line.trim()
-                    if (trimmed.isNotEmpty() && !trimmed.startsWith("#")) {
-                        // Xử lý URL tương đối (Relative Path) thành URL tuyệt đối (Absolute Path)
-                        val absoluteUrl = URI(streamItem.url).resolve(trimmed).toString()
-                        segmentUrls.add(absoluteUrl)
-                    }
+                val segmentUrls = buildList {
+                    playlist.initSegmentUrl?.let(::add)
+                    addAll(playlist.segmentUrls)
                 }
-
-                if (segmentUrls.isEmpty()) throw Exception("Không tìm thấy phân mảnh .ts nào trong m3u8")
+                if (segmentUrls.isEmpty()) throw Exception("Không tìm thấy phân mảnh trong m3u8")
 
                 // 3. Chuẩn bị thư mục tải (Dùng Context.getExternalFilesDir để tránh lỗi Scoped Storage Android 11+)
-                val downloadDir = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), "HLS_Temp")
-                if (!downloadDir.exists()) downloadDir.mkdirs()
-                
-                val safeFileName = fileName.replace(Regex("[^a-zA-Z0-9.-]"), "_") + ".mp4"
-                val finalOutputFile = File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), safeFileName)
+                val moviesDir = requireNotNull(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)) { "Không có thư mục Movies" }
+                // Unique temp directory prevents stale segments from a cancelled download being merged later.
+                val downloadDir = File(moviesDir, "HLS_${UUID.randomUUID()}")
+                tempDir = downloadDir
+                if (!downloadDir.mkdirs()) throw Exception("Không tạo được thư mục tạm")
+
+                val baseName = fileName.replace(Regex("[^a-zA-Z0-9.-]"), "_").trim('.').ifBlank { "stream" }
+                // Concatenated MPEG-TS is not an MP4 container. Name the output honestly;
+                // CMAF/fMP4 playlists with an init segment remain .mp4-compatible.
+                val extension = if (playlist.initSegmentUrl != null || segmentUrls.any { it.substringBefore('?').endsWith(".m4s", true) }) "mp4" else "ts"
+                val finalOutputFile = uniqueOutputFile(moviesDir, baseName, extension)
+                partialOutput = finalOutputFile
 
                 _downloadState.value = DownloadState(
                     status = DownloadStatus.DOWNLOADING_SEGMENTS,
@@ -111,7 +112,7 @@ object HlsDownloader {
                         val deferreds = chunk.map { (index, url) ->
                             async {
                                 val tempFile = File(downloadDir, "segment_$index.ts")
-                                downloadSegment(url, tempFile)
+                                downloadSegment(url, tempFile, requestHeaders)
                                 tempFiles[index] = tempFile
                             }
                         }
@@ -130,7 +131,7 @@ object HlsDownloader {
                 // 5. NỐI FILE (Muxing TS files)
                 _downloadState.value = DownloadState(DownloadStatus.MERGING, message = "Đang ghép các phân mảnh thành MP4...")
                 
-                FileOutputStream(finalOutputFile, true).use { outputStream ->
+                FileOutputStream(finalOutputFile, false).use { outputStream ->
                     for (i in tempFiles.indices) {
                         val tempFile = tempFiles[i]
                         if (tempFile != null && tempFile.exists()) {
@@ -143,8 +144,10 @@ object HlsDownloader {
                     }
                 }
 
-                // Dọn dẹp thư mục Temp
-                downloadDir.delete()
+                // Dọn dẹp toàn bộ thư mục Temp, including partially-created segment files.
+                downloadDir.deleteRecursively()
+                tempDir = null
+                partialOutput = null
 
                 _downloadState.value = DownloadState(
                     status = DownloadStatus.SUCCESS,
@@ -154,11 +157,25 @@ object HlsDownloader {
                 )
 
             } catch (e: CancellationException) {
+                tempDir?.deleteRecursively(); partialOutput?.delete()
                 _downloadState.value = DownloadState(DownloadStatus.ERROR, message = "Đã hủy tải xuống.")
             } catch (e: Exception) {
+                tempDir?.deleteRecursively(); partialOutput?.delete()
                 e.printStackTrace()
                 _downloadState.value = DownloadState(DownloadStatus.ERROR, message = "Lỗi: ${e.message}")
             }
+        }
+    }
+
+    /** Loads master-playlist variants for UI choice. No segment is downloaded here. */
+    fun inspectVariants(streamItem: StreamItem, callback: (List<HlsPlaylistResolver.Variant>) -> Unit) {
+        val cookie = android.webkit.CookieManager.getInstance().getCookie(streamItem.url).orEmpty()
+        val headers = buildRequestHeaders(streamItem, cookie)
+        CoroutineScope(Dispatchers.IO).launch {
+            val variants = runCatching {
+                HlsPlaylistResolver.parse(fetchPlaylist(streamItem.url, headers), streamItem.url).variants
+            }.getOrDefault(emptyList())
+            withContext(Dispatchers.Main) { callback(variants) }
         }
     }
 
@@ -167,15 +184,51 @@ object HlsDownloader {
         _downloadState.value = DownloadState(DownloadStatus.IDLE, message = "Đã dừng tải.")
     }
 
-    private fun downloadSegment(url: String, outputFile: File) {
-        val request = Request.Builder().url(url).build()
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw Exception("Lỗi tải Fragment: ${response.code}")
-            
-            val inputStream = response.body?.byteStream() ?: throw Exception("Body rỗng")
-            FileOutputStream(outputFile).use { output ->
-                inputStream.copyTo(output)
+    private fun fetchPlaylist(url: String, headers: okhttp3.Headers): String =
+        client.newCall(Request.Builder().url(url).headers(headers).build()).execute().use { response ->
+            if (!response.isSuccessful) throw Exception("Không thể tải m3u8: ${response.code}")
+            response.body?.string() ?: throw Exception("Nội dung m3u8 trống")
+        }
+
+    private suspend fun downloadSegment(url: String, outputFile: File, headers: okhttp3.Headers) {
+        var lastError: Exception? = null
+        repeat(MAX_SEGMENT_ATTEMPTS) { attempt ->
+            try {
+                client.newCall(Request.Builder().url(url).headers(headers).build()).execute().use { response ->
+                    if (!response.isSuccessful) throw Exception("HTTP ${response.code}")
+                    val input = response.body?.byteStream() ?: throw Exception("Body rỗng")
+                    FileOutputStream(outputFile, false).use { input.copyTo(it) }
+                }
+                return
+            } catch (e: Exception) {
+                lastError = e; outputFile.delete()
+                if (attempt + 1 < MAX_SEGMENT_ATTEMPTS) delay(400L * (attempt + 1))
             }
         }
+        throw Exception("Lỗi tải fragment sau $MAX_SEGMENT_ATTEMPTS lần: ${lastError?.message}")
     }
+
+    private fun buildRequestHeaders(stream: StreamItem, cookie: String): okhttp3.Headers = okhttp3.Headers.Builder().apply {
+        add("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36")
+        if (stream.referer.isNotBlank()) add("Referer", stream.referer)
+        if (cookie.isNotBlank()) add("Cookie", cookie)
+        runCatching {
+            val u = java.net.URL(stream.referer)
+            add("Origin", "${u.protocol}://${u.host}")
+        }
+    }.build()
+
+    private fun uniqueOutputFile(directory: File, baseName: String, extension: String): File {
+        var index = 0
+        while (true) {
+            val suffix = if (index == 0) "" else " ($index)"
+            val file = File(directory, "$baseName$suffix.$extension")
+            if (!file.exists()) return file
+            index++
+        }
+    }
+
+    private const val MAX_PLAYLIST_DEPTH = 3
+    private const val MAX_SEGMENT_ATTEMPTS = 3
+
 }

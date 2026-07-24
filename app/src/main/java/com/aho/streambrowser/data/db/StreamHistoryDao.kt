@@ -17,6 +17,10 @@ interface StreamHistoryDao {
     @Query("SELECT COUNT(*) FROM stream_history")
     suspend fun count(): Int
 
+    /** Retain exactly the most recent rows; avoids the previous 100-row cleanup window bug. */
+    @Query("DELETE FROM stream_history WHERE id NOT IN (SELECT id FROM stream_history ORDER BY timestamp DESC, id DESC LIMIT :limit)")
+    suspend fun pruneToLimit(limit: Int)
+
     @Query("SELECT * FROM stream_history ORDER BY timestamp DESC LIMIT 100")
     suspend fun getRecent(): List<StreamHistoryEntity>
 }

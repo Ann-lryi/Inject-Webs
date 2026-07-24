@@ -13,6 +13,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.aho.streambrowser.detector.StreamDetector
+import com.aho.streambrowser.util.SnapshotPrivacy
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -226,21 +227,21 @@ class HtmlExportManager(
             webView.draw(android.graphics.Canvas(bitmap)); bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out); bitmap.recycle()
         }.toByteArray()
         val metadata = JSONObject().apply {
-            put("url", if (redacted) redactText(webView.url ?: "") else (webView.url ?: "")); put("title", webView.title ?: "")
+            put("url", if (redacted) SnapshotPrivacy.redactText(webView.url ?: "") else (webView.url ?: "")); put("title", webView.title ?: "")
             put("capturedAt", System.currentTimeMillis()); put("userAgent", webView.settings.userAgentString)
             put("redacted", redacted)
             put("viewport", JSONObject().put("width", webView.width).put("height", webView.height))
             put("scroll", JSONObject().put("x", webView.scrollX).put("y", webView.scrollY))
         }.toString(2)
         val streams = JSONArray().apply { detector.streams.forEach { put(JSONObject().apply {
-            put("url", if (redacted) redactText(it.url) else it.url); put("type", it.type.name); put("source", it.source); put("referer", if (redacted) redactText(it.referer) else it.referer)
+            put("url", if (redacted) SnapshotPrivacy.redactText(it.url) else it.url); put("type", it.type.name); put("source", it.source); put("referer", if (redacted) SnapshotPrivacy.redactText(it.referer) else it.referer)
         }) } }.toString(2)
         val network = JSONArray().apply { detector.requests.take(500).forEach { request -> put(JSONObject().apply {
-            put("url", if (redacted) redactText(request.url) else request.url)
+            put("url", if (redacted) SnapshotPrivacy.redactText(request.url) else request.url)
             put("method", request.method); put("statusCode", request.statusCode); put("mimeType", request.mimeType)
             put("isStream", request.isStream); put("timestamp", request.timestamp)
-            put("referer", if (redacted) redactText(request.referer) else request.referer)
-            put("headers", JSONObject(request.headers.mapValues { (key, value) -> if (redacted && SENSITIVE_HEADER.containsMatchIn(key)) "[REDACTED]" else value }))
+            put("referer", if (redacted) SnapshotPrivacy.redactText(request.referer) else request.referer)
+            put("headers", JSONObject(request.headers.mapValues { (key, value) -> if (redacted) SnapshotPrivacy.redactHeaderValue(key, value) else value }))
         }) } }.toString(2)
         Thread {
             val bytes = ByteArrayOutputStream().use { out ->
@@ -253,13 +254,6 @@ class HtmlExportManager(
             activity.runOnUiThread { pendingZip = bytes; createZip.launch(htmlName.removeSuffix(".html") + ".zip") }
         }.start()
     }
-
-    private val SENSITIVE_HEADER = Regex("(?i)^(authorization|cookie|set-cookie|x-api-key|x-auth-token)$")
-
-    private fun redactText(text: String): String = text
-        .replace(Regex("(?i)(Bearer\\s+)[A-Za-z0-9._~-]+"), "${'$'}1[REDACTED]")
-        .replace(Regex("\\beyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]+"), "[REDACTED_JWT]")
-        .replace(Regex("(?i)([?&](?:access_token|token|auth|authorization|cookie|session|password|secret|api[_-]?key)=)[^&#\\s]+"), "${'$'}1[REDACTED]")
 
     private fun copy(text: String) {
         val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager

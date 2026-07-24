@@ -36,6 +36,8 @@ class BrowserWebViewClient(
 
     private val activeRequests = AtomicInteger(0)
     private val MAX_CONCURRENT = 8
+    private val MAX_CAPTURE_BYTES = 64 * 1024
+    private val MAX_PREVIEW_CHARS = 4_000
 
     // Activity-log: "JS Bridge ready" only needs to be logged once per app session
     private var bridgeReadyLogged = false
@@ -132,19 +134,23 @@ class BrowserWebViewClient(
 
     private fun emptyResponse() = WebResourceResponse("text/plain", "utf-8", null)
 
+    /**
+     * Makes a bounded *secondary* fetch only for useful textual candidates. WebView still owns the
+     * real request; this path exists exclusively to inspect manifests/JSON. Keeping it bounded
+     * prevents a video/image response from being duplicated into memory or exhausting the network.
+     */
     private fun fetchResponseAsync(url: String, headers: Map<String, String>, method: String) {
-        if (method.uppercase() !in listOf("GET", "HEAD")) return
-        // G3: Skip if at capacity — but allow stream URLs through at lower threshold
-        val isStream = url.contains(".m3u8") || url.contains(".m3u") || url.contains(".mpd") || url.contains(".m3u9")
+        if (method.uppercase() !in listOf("GET", "HEAD") || isLikelyBinaryStatic(url)) return
+        val isStream = url.contains(".m3u8", true) || url.contains(".m3u", true) ||
+            url.contains(".mpd", true) || url.contains(".m3u9", true)
         val limit = if (isStream) MAX_CONCURRENT else MAX_CONCURRENT - 2
-        if (activeRequests.get() >= limit) {
+        if (!tryAcquireCaptureSlot(limit)) {
             if (!capWarningLogged) {
                 capWarningLogged = true
                 detector.addLog("warn", "Response-fetch cap reached ($MAX_CONCURRENT concurrent) — some response bodies on this page were skipped", "capture")
             }
             return
         }
-        activeRequests.incrementAndGet()
 
         scope.launch {
             try {
@@ -153,36 +159,55 @@ class BrowserWebViewClient(
                 headers.forEach { (k, v) -> if (k.lowercase() !in skipHdrs) rb.addHeader(k, v) }
                 if (method.uppercase() == "HEAD") rb.head() else rb.get()
 
-                val resp = okHttpClient.newCall(rb.build()).execute()
-                val status     = resp.code
-                val resHeaders = resp.headers.toMap()
-                val mime       = resp.header("Content-Type", "") ?: ""
-                val size       = resp.header("Content-Length", "-1")?.toLongOrNull() ?: -1L
+                okHttpClient.newCall(rb.build()).execute().use { resp ->
+                    val status = resp.code
+                    val resHeaders = resp.headers.toMap()
+                    val mime = resp.header("Content-Type", "") ?: ""
+                    val size = resp.header("Content-Length", "-1")?.toLongOrNull() ?: -1L
+                    val capturedText = captureText(resp.body?.source())
+                    val preview = capturedText.take(MAX_PREVIEW_CHARS)
 
-                val body = try {
-                    val src = resp.body?.source() ?: run { resp.close(); return@launch }
-                    src.request(4096L)
-                    val bytes = src.readByteArray()
-                    resp.close()
-                    try { String(bytes, Charsets.UTF_8).take(4000) }
-                    catch (_: Exception) { "(${bytes.size} bytes binary)" }
-                } catch (_: Exception) { ""; }
-
-                detector.requests.find { it.url == url }?.let { old ->
-                    detector.updateRequest(url, old.withResponse(status, resHeaders, body, mime, size))
-                }
-                if (body.isNotBlank()) {
-                    if (isStream || mime.contains("mpegurl", ignoreCase = true) || mime.contains("dash+xml", ignoreCase = true)) {
-                        detector.scanManifestForStreams(url, body, "native_resp", currentUrl)
-                    } else if (mime.contains("json", ignoreCase = true) || mime.contains("javascript", ignoreCase = true) || mime.contains("text", ignoreCase = true)) {
-                        detector.scanTextForStreams(body, "native_resp", currentUrl)
+                    detector.requests.find { it.url == url }?.let { old ->
+                        detector.updateRequest(url, old.withResponse(status, resHeaders, preview, mime, size))
+                    }
+                    if (capturedText.isNotBlank()) {
+                        if (isStream || mime.contains("mpegurl", true) || mime.contains("dash+xml", true)) {
+                            detector.scanManifestForStreams(url, capturedText, "native_resp", currentUrl)
+                        } else if (mime.contains("json", true) || mime.contains("javascript", true) || mime.contains("text", true)) {
+                            detector.scanTextForStreams(capturedText, "native_resp", currentUrl)
+                        }
                     }
                 }
             } catch (_: Exception) {
+                // Network inspection is best-effort; never affect the WebView's original request.
             } finally {
                 activeRequests.decrementAndGet()
             }
         }
+    }
+
+    private fun tryAcquireCaptureSlot(limit: Int): Boolean {
+        while (true) {
+            val active = activeRequests.get()
+            if (active >= limit) return false
+            if (activeRequests.compareAndSet(active, active + 1)) return true
+        }
+    }
+
+    private fun captureText(source: okio.BufferedSource?): String {
+        if (source == null) return ""
+        return try {
+            // request(max) fills no more than max bytes even if the server sends a huge body.
+            source.request(MAX_CAPTURE_BYTES.toLong())
+            val available = minOf(source.buffer.size, MAX_CAPTURE_BYTES.toLong())
+            val bytes = source.buffer.readByteArray(available)
+            bytes.toString(Charsets.UTF_8)
+        } catch (_: Exception) { "" }
+    }
+
+    private fun isLikelyBinaryStatic(url: String): Boolean {
+        val path = url.substringBefore('?').lowercase()
+        return listOf(".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico", ".svg", ".woff", ".woff2", ".ttf", ".otf").any(path::endsWith)
     }
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -214,7 +239,12 @@ class BrowserChromeClient(
 ) : WebChromeClient() {
     override fun onProgressChanged(view: WebView, newProgress: Int) = onProgressChanged(newProgress)
     override fun onReceivedTitle(view: WebView, title: String)      = onTitleReceived(title)
-    override fun onPermissionRequest(request: PermissionRequest)    = request.grant(request.resources)
+    override fun onPermissionRequest(request: PermissionRequest) {
+        // Never auto-grant camera/microphone/geolocation-style web permissions to arbitrary pages.
+        // The app has no consent UI or matching runtime permission flow for these resources.
+        request.deny()
+        detector.addLog("warn", "Web permission request denied: ${request.resources.joinToString()}", "permission")
+    }
     override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
         // FIX: page's real console.log/warn/error was previously discarded entirely —
         // bare `return true` only suppressed the default Logcat mirroring. Now forwarded
