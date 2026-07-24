@@ -136,13 +136,16 @@ class HtmlExportManager(
 
 
     private fun showVariantChooser(currentHtml: String, currentSelector: String) {
-        val options = arrayOf("Element đang chọn", "Parent trực tiếp", "Container nội dung/player", "Video / audio / iframe gần nhất", "Mở DOM Inspector")
+        val options = arrayOf("Element đang chọn", "Parent trực tiếp", "Container nội dung/player", "Video / audio / iframe gần nhất", "Mở DOM Inspector", "Phân tích Media / Stream / Network")
         AlertDialog.Builder(activity).setTitle("Chọn phạm vi HTML").setItems(options) { _, which ->
-            if (which == 0) showSelectedHtml(currentHtml, currentSelector)
-            else if (which == 4) ElementPickerManager.requestInspection(webView) { json -> showDomInspector(json) }
-            else {
-                val kind = arrayOf("element", "parent", "container", "media")[which]
-                ElementPickerManager.requestVariant(webView, kind) { html, selector -> showSelectedHtml(html, selector) }
+            when (which) {
+                0 -> showSelectedHtml(currentHtml, currentSelector)
+                4 -> ElementPickerManager.requestInspection(webView) { json -> showDomInspector(json) }
+                5 -> showSelectionAnalysis(currentHtml, currentSelector)
+                else -> {
+                    val kind = arrayOf("element", "parent", "container", "media")[which]
+                    ElementPickerManager.requestVariant(webView, kind) { html, selector -> showSelectedHtml(html, selector) }
+                }
             }
         }.show()
     }
@@ -157,8 +160,12 @@ class HtmlExportManager(
             val attrs = node.optJSONObject("attrs")
             val attrText = attrs?.keys()?.asSequence()?.joinToString(" ") { key -> "$key=\"${attrs.optString(key)}\"" } ?: ""
             val rect = node.optJSONObject("rect")
+            val computed = node.optJSONObject("computed")
+            val media = node.optJSONObject("media")
+            val computedText = computed?.let { "display=${it.optString("display")} position=${it.optString("position")} z=${it.optString("zIndex")} opacity=${it.optString("opacity")}" } ?: ""
+            val mediaText = media?.toString() ?: ""
             content.addView(TextView(activity).apply {
-                text = "${"  ".repeat(depth)}<${node.optString("tag")}>  ${node.optString("selector")}\n${"  ".repeat(depth)}$attrText\n${"  ".repeat(depth)}${rect?.optInt("width")}×${rect?.optInt("height")}  ${node.optString("text")}"
+                text = "${"  ".repeat(depth)}<${node.optString("tag")}>  ${node.optString("selector")}\n${"  ".repeat(depth)}$attrText\n${"  ".repeat(depth)}${rect?.optInt("width")}×${rect?.optInt("height")}  $computedText  $mediaText  ${node.optString("text")}"
                 typeface = android.graphics.Typeface.MONOSPACE; textSize = 10f; setPadding(dp(4), dp(5), dp(4), dp(5))
             })
             val children = node.optJSONArray("children") ?: JSONArray()
@@ -167,6 +174,27 @@ class HtmlExportManager(
         render(root, 0); scroll.addView(content)
         AlertDialog.Builder(activity).setTitle("DOM Inspector · ${root.optString("tag")}").setView(scroll)
             .setPositiveButton("Copy JSON") { _, _ -> copy(json) }.setNegativeButton("Đóng", null).show()
+    }
+
+    /** Correlates the picked markup with information already observed by StreamDetector; no new request is made. */
+    private fun showSelectionAnalysis(html: String, selector: String) {
+        val urls = Regex("""(?:data-sb-current-src|src|poster)\s*=\s*["']([^"']+)["']""")
+            .findAll(html).map { it.groupValues[1] }.filter { it.isNotBlank() }.distinct().take(12).toList()
+        val hosts = urls.mapNotNull { runCatching { java.net.URL(it).host }.getOrNull() }.toSet()
+        val streams = detector.streams.filter { stream -> hosts.isEmpty() || runCatching { java.net.URL(stream.url).host in hosts }.getOrDefault(false) }.take(12)
+        val requests = detector.requests.filter { req -> hosts.isEmpty() || req.host in hosts }.take(12)
+        val details = buildString {
+            append("Selector: ").append(selector).append("\n\n")
+            append("MEDIA URLS (DOM)\n")
+            if (urls.isEmpty()) append("Không thấy src/currentSrc/poster trong vùng đã chọn.\n") else urls.forEach { append("• ").append(it).append('\n') }
+            append("\nSTREAMS ĐÃ BẮT\n")
+            if (streams.isEmpty()) append("Chưa có stream khớp host; hãy phát media hoặc mở Stream Lab.\n") else streams.forEach { append("• [").append(it.type).append("] ").append(it.url).append('\n') }
+            append("\nNETWORK GẦN LIÊN QUAN\n")
+            if (requests.isEmpty()) append("Không có request khớp host trong session.\n") else requests.forEach { append("• ").append(it.method).append(' ').append(it.url).append("  (").append(it.statusCode).append(")\n") }
+        }
+        val view = TextView(activity).apply { text = details; typeface = android.graphics.Typeface.MONOSPACE; textSize = 10f; setTextIsSelectable(true); setPadding(dp(16), dp(10), dp(16), dp(10)) }
+        AlertDialog.Builder(activity).setTitle("Media / Stream / Network").setView(ScrollView(activity).apply { addView(view) })
+            .setPositiveButton("Copy") { _, _ -> copy(details) }.setNegativeButton("Đóng", null).show()
     }
 
     private fun beginCapture(name: String): String {
@@ -207,17 +235,26 @@ class HtmlExportManager(
         val streams = JSONArray().apply { detector.streams.forEach { put(JSONObject().apply {
             put("url", if (redacted) redactText(it.url) else it.url); put("type", it.type.name); put("source", it.source); put("referer", if (redacted) redactText(it.referer) else it.referer)
         }) } }.toString(2)
+        val network = JSONArray().apply { detector.requests.take(500).forEach { request -> put(JSONObject().apply {
+            put("url", if (redacted) redactText(request.url) else request.url)
+            put("method", request.method); put("statusCode", request.statusCode); put("mimeType", request.mimeType)
+            put("isStream", request.isStream); put("timestamp", request.timestamp)
+            put("referer", if (redacted) redactText(request.referer) else request.referer)
+            put("headers", JSONObject(request.headers.mapValues { (key, value) -> if (redacted && SENSITIVE_HEADER.containsMatchIn(key)) "[REDACTED]" else value }))
+        }) } }.toString(2)
         Thread {
             val bytes = ByteArrayOutputStream().use { out ->
                 ZipOutputStream(out).use { zip ->
                     fun add(name: String, text: String) { zip.putNextEntry(ZipEntry(name)); zip.write(text.toByteArray(Charsets.UTF_8)); zip.closeEntry() }
-                    add("snapshot.html", html); add("metadata.json", metadata); add("streams.json", streams)
+                    add("snapshot.html", html); add("metadata.json", metadata); add("streams.json", streams); add("network.json", network)
                     if (screenshot != null) { zip.putNextEntry(ZipEntry("viewport.png")); zip.write(screenshot); zip.closeEntry() }
                 }; out.toByteArray()
             }
             activity.runOnUiThread { pendingZip = bytes; createZip.launch(htmlName.removeSuffix(".html") + ".zip") }
         }.start()
     }
+
+    private val SENSITIVE_HEADER = Regex("(?i)^(authorization|cookie|set-cookie|x-api-key|x-auth-token)$")
 
     private fun redactText(text: String): String = text
         .replace(Regex("(?i)(Bearer\\s+)[A-Za-z0-9._~-]+"), "${'$'}1[REDACTED]")

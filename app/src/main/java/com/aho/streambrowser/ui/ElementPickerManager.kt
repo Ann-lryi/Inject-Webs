@@ -149,7 +149,10 @@ object ElementPickerManager {
               if(!el || count++>120) return null;
               var r=el.getBoundingClientRect(), attrs={}, names=el.getAttributeNames ? el.getAttributeNames() : [];
               for(var i=0;i<names.length&&i<25;i++) attrs[names[i]]=String(el.getAttribute(names[i])).slice(0,180);
-              var item={tag:el.tagName.toLowerCase(),selector:path(el),attrs:attrs,rect:{x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)},text:(el.childElementCount?'' :(el.textContent||'').trim().slice(0,140)),children:[]};
+              var cs=getComputedStyle(el), media=null;
+              if(/^(VIDEO|AUDIO)$/.test(el.tagName)) media={currentSrc:el.currentSrc||el.src||'',currentTime:el.currentTime||0,duration:el.duration||0,paused:el.paused,muted:el.muted};
+              else if(el.tagName==='IFRAME') media={frameSrc:el.src||''};
+              var item={tag:el.tagName.toLowerCase(),selector:path(el),attrs:attrs,rect:{x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)},computed:{display:cs.display,visibility:cs.visibility,position:cs.position,zIndex:cs.zIndex,opacity:cs.opacity},media:media,text:(el.childElementCount?'' :(el.textContent||'').trim().slice(0,140)),children:[]};
               if(depth<4) for(var j=0;j<el.children.length&&j<20;j++){var child=desc(el.children[j],depth+1);if(child)item.children.push(child);}
               return item;
             }
