@@ -65,14 +65,29 @@ class PlayerActivity : AppCompatActivity() {
             exo.setMediaSource(mediaSource)
             exo.prepare()
             exo.playWhenReady = true
+            // Sensible defaults previously left implicit: seek increments, repeat off.
+            b.playerView.setShowFastForwardButton(true)
+            b.playerView.setShowRewindButton(true)
+            b.playerView.controllerShowTimeoutMs = 4000
             exo.addListener(object : Player.Listener {
                 override fun onPlayerError(error: PlaybackException) {
                     Toast.makeText(this@PlayerActivity, "Lỗi: ${error.message}", Toast.LENGTH_LONG).show()
                 }
-                override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    // Update PiP actions if needed
-                }
             })
+        }
+
+        // Long-press the player to cycle playback speed (1x -> 1.5x -> 2x -> 0.75x -> 1x).
+        b.playerView.setOnLongClickListener {
+            val p = player ?: return@setOnLongClickListener false
+            val next = when (p.playbackParameters.speed) {
+                1.0f -> 1.5f
+                1.5f -> 2.0f
+                2.0f -> 0.75f
+                else -> 1.0f
+            }
+            p.setPlaybackSpeed(next)
+            Toast.makeText(this, "Tốc độ: ${next}x", Toast.LENGTH_SHORT).show()
+            true
         }
     }
 

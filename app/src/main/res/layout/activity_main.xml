@@ -75,10 +75,10 @@
 
                 <ImageButton android:id="@+id/btnDesktop"
                     android:layout_width="42dp" android:layout_height="42dp"
-                    android:src="@drawable/ic_home"
+                    android:src="@drawable/ic_desktop"
                     android:background="@drawable/bg_icon_btn"
                     android:alpha="0.5"
-                    android:scaleType="center" android:contentDescription="Desktop"/>
+                    android:scaleType="center" android:contentDescription="Desktop mode"/>
 
                 <ImageButton android:id="@+id/btnBookmark"
                     android:layout_width="42dp" android:layout_height="42dp"
@@ -140,21 +140,106 @@
         app:icon="@drawable/ic_devtools" app:iconTint="#FFF"
         app:backgroundTint="@color/accent_green" app:elevation="12dp"/>
 
-    <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
-        android:id="@+id/btnExportHtml"
-        android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:layout_gravity="bottom|start" android:layout_margin="16dp"
-        android:layout_marginBottom="80dp"
-        android:text="Xuất HTML" android:textSize="12sp" android:textColor="#FFF"
-        app:icon="@drawable/ic_devtools" app:iconTint="#FFF"
-        app:backgroundTint="@color/accent_blue" app:elevation="8dp"/>
-
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/btnPickerFloat"
-        android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:layout_gravity="bottom|start" android:layout_margin="16dp"
-        android:src="@drawable/ic_picker" android:contentDescription="Picker"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="16dp"
+        android:layout_marginBottom="148dp"
+        android:src="@drawable/ic_picker"
+        android:contentDescription="Picker"
+        android:visibility="invisible"
         app:backgroundTint="@color/accent_pink" app:tint="#FFF"
         app:elevation="8dp"/>
+
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/btnExportHtml"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="16dp"
+        android:layout_marginBottom="92dp"
+        android:src="@drawable/ic_devtools"
+        android:contentDescription="Xuat HTML"
+        android:visibility="invisible"
+        app:backgroundTint="@color/accent_blue" app:tint="#FFF"
+        app:elevation="8dp"/>
+
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/btnTools"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="16dp"
+        android:src="@drawable/ic_devtools"
+        android:contentDescription="Cong cu"
+        app:backgroundTint="@color/surface3" app:tint="#FFF"
+        app:elevation="8dp"/>
+
+
+    <!-- In-app download progress card. Mirrors the foreground notification but stays visible
+         while the app is open; updates from HlsDownloader.downloadState. -->
+    <LinearLayout
+        android:id="@+id/downloadCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginBottom="88dp"
+        android:orientation="vertical"
+        android:padding="14dp"
+        android:background="@drawable/bg_stream_card"
+        android:elevation="10dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/tvDownloadTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Dang tai HLS"
+                android:textColor="@color/text_primary"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:singleLine="true"
+                android:ellipsize="middle"/>
+
+            <ImageButton
+                android:id="@+id/btnDownloadCancel"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:src="@drawable/ic_close"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Dung tai"
+                app:tint="@color/text_secondary"/>
+        </LinearLayout>
+
+        <ProgressBar
+            android:id="@+id/downloadProgress"
+            style="@style/Widget.AppCompat.ProgressBar.Horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="6dp"
+            android:layout_marginTop="8dp"
+            android:max="100"
+            android:progressTint="@color/accent_green"
+            android:progressBackgroundTint="@color/surface2"/>
+
+        <TextView
+            android:id="@+id/tvDownloadStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="11sp"
+            android:singleLine="true"
+            android:ellipsize="end"/>
+    </LinearLayout>
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

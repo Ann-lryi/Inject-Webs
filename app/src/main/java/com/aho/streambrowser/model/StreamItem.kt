@@ -95,59 +95,52 @@ data class StreamItem(
             if (url.isBlank()) return null
             
             val l = url.lowercase()
+            val path = runCatching { java.net.URL(l).path }.getOrDefault(l)
             
-            // Primary checks - exact extensions
-            return when {
-                // HLS - Most common streaming protocol
-                l.contains(".m3u8") || 
-                l.contains("/hls/") || 
-                l.contains("hls.v") ||
-                l.contains("manifest/m3u8") ||
-                l.contains(".m3u") -> StreamType.HLS
-
-                // M3U9 - non-standard obfuscated-HLS extension (some sites use this)
+            // Primary checks — clear file extensions first (highest confidence).
+            val byExtension = when {
                 l.contains(".m3u9") -> StreamType.M3U9
+                l.contains(".m3u8") || l.contains(".m3u") -> StreamType.HLS
+                l.contains(".mpd") -> StreamType.DASH
+                l.contains(".mp4") || l.contains(".m4v") || l.contains(".mov") -> StreamType.MP4
+                l.contains(".flv") -> StreamType.FLV
+                l.contains(".webm") || l.contains(".mkv") -> StreamType.WEBM
+                l.contains("wss://") || l.contains("ws://") -> StreamType.WEBSOCKET
+                l.contains("rtmp://") || l.contains("rtmps://") -> StreamType.RTMP
+                else -> null
+            }
+            if (byExtension != null) return byExtension
 
-                // DASH - Adaptive streaming
-                l.contains(".mpd") || 
-                l.contains("/dash/") ||
-                l.contains("manifest/dash") ||
-                l.contains("manifests/") -> StreamType.DASH
-                
-                // MP4 - Progressive download
-                l.contains(".mp4") || 
-                l.contains(".m4v") ||
-                l.contains(".mov") ||
-                l.contains("/video/") -> StreamType.MP4
-                
-                // FLV - Flash video
-                l.contains(".flv") || 
-                l.contains("/flv/") -> StreamType.FLV
-                
-                // WebM
-                l.contains(".webm") || 
-                l.contains(".mkv") -> StreamType.WEBM
-                
-                // WebSocket streaming
-                l.contains("wss://") || 
-                l.contains("ws://") -> StreamType.WEBSOCKET
-                
-                // RTMP
-                l.contains("rtmp://") || 
-                l.contains("rtmps://") -> StreamType.RTMP
-                
-                // Advanced heuristics for CDN streams
-                l.contains("stream") && l.contains("token") && l.startsWith("http") -> StreamType.HLS
-                l.contains("/video/") && l.contains("cdn") && l.startsWith("http") -> StreamType.MP4
-                l.contains("clips/") && l.contains("playlist") -> StreamType.HLS
-                l.contains("api/") && l.contains("play") && l.contains("token") -> StreamType.HLS
-                l.contains("content/") && (l.contains("manifest") || l.contains("master")) -> StreamType.HLS
-                l.contains("videos/") && l.contains(".com") -> StreamType.MP4
-                
-                // Quality indicators for streams without clear extensions
-                l.contains("chunklist") || l.contains("segment") -> StreamType.HLS
-                l.contains("bitrate") || l.contains("adaptive") -> StreamType.HLS
-                
+            // Secondary checks — path-based (CDN layouts). Scoped to the URL PATH so a query
+            // string or host containing "/hls/" doesn't trigger a false positive.
+            val byPath = when {
+                path.contains("/hls/") || path.contains("manifest/m3u8") ||
+                    path.contains("/dash/") || path.contains("manifest/dash") ->
+                    if (path.contains("dash")) StreamType.DASH else StreamType.HLS
+                path.contains("/flv/") -> StreamType.FLV
+                else -> null
+            }
+            if (byPath != null) return byPath
+
+            // Weak heuristics — require corroborating signals, because single-keyword matches
+            // like "/video/" or "videos/...com" previously misclassified arbitrary
+            // REST/CDN URLs (tracking, thumbnails, APIs).
+            val hasManifestWord = listOf("manifest", "master", "playlist", "chunklist").any { l.contains(it) }
+            val isSegment = path.endsWith(".ts") || path.contains("/segment") || l.contains("segment_")
+            val hasStreamWord = l.contains("stream") || l.contains("bitrate")
+            val hasToken = l.contains("token") || l.contains("sign=")
+            val isHttp = l.startsWith("http")
+            return when {
+                // HLS: a media-segment-shaped URL (.ts / segment_), OR a manifest word plus
+                // another stream/token signal, OR a stream/play endpoint carrying both a token
+                // and a bitrate/stream keyword (common CDN signed-URL shape).
+                isHttp && (
+                    isSegment ||
+                        (hasManifestWord && (hasToken || hasStreamWord)) ||
+                        (hasStreamWord && hasToken)
+                    ) -> StreamType.HLS
+                // MP4: explicit /cdn/ video asset path, not any random "/video/"
+                isHttp && path.contains("/cdn/") && path.contains("/video/") -> StreamType.MP4
                 else -> null
             }
         }

@@ -19,11 +19,23 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Fix Gradle Wrapper JAR
+      # The wrapper jar is committed to the repo, but as a safety net verify it matches the
+      # known-good SHA-256 for Gradle 8.4 and re-download only if it is missing/corrupt. The old
+      # step unconditionally fetched a jar over HTTPS from an unversioned-looking URL and never
+      # verified it — a supply-chain risk for every build.
+      - name: Verify Gradle Wrapper JAR
         run: |
-          curl -sL \
-            "https://github.com/gradle/gradle/raw/v8.4.0/gradle/wrapper/gradle-wrapper.jar" \
-            -o gradle/wrapper/gradle-wrapper.jar
+          EXPECTED_SHA="7d498edd85d4f27afd3612b129a7f55d1c5915d876f59afd8c592fbe167d9e0b"
+          JAR=gradle/wrapper/gradle-wrapper.jar
+          ACTUAL_SHA=$(sha256sum "$JAR" 2>/dev/null | awk '{print $1}')
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "Wrapper jar missing or checksum mismatch — re-downloading Gradle 8.4 wrapper"
+            curl -fsSL \
+              "https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradle/wrapper/gradle-wrapper.jar" \
+              -o "$JAR"
+            NEW_SHA=$(sha256sum "$JAR" | awk '{print $1}')
+            test "$NEW_SHA" = "$EXPECTED_SHA" || { echo "Downloaded wrapper failed checksum"; exit 1; }
+          fi
 
       - name: Cache Gradle
         uses: actions/cache@v4

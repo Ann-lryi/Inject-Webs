@@ -47,6 +47,7 @@ import com.aho.streambrowser.util.CrashHandler
 import com.aho.streambrowser.util.RequestBlocker
 import com.aho.streambrowser.util.UserAgentManager
 import com.aho.streambrowser.viewmodel.BrowserViewModel
+import com.aho.streambrowser.feature.downloader.hls.DownloadStatus
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 
@@ -68,6 +69,9 @@ class MainActivity : AppCompatActivity() {
     private var isIncognito   = false
     private var mobileUA      = ""
 
+    // Left-side expandable tools FAB (Export HTML / Element picker).
+    private var toolsExpanded = false
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,16 +83,18 @@ class MainActivity : AppCompatActivity() {
         ViewCompat.setOnApplyWindowInsetsListener(b.root) { _, wi ->
             val bars = wi.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             b.toolbar.updatePadding(top = bars.top)
-            val dp16 = (16 * resources.displayMetrics.density).toInt()
-            listOf(b.btnDevTools, b.btnPickerFloat).forEach { fab ->
+            val dp = resources.displayMetrics.density
+            val navBarBottom = bars.bottom
+            fun setBottomMargin(fab: View, dpBase: Int) {
                 (fab.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams)?.let {
-                    it.bottomMargin = dp16 + bars.bottom; fab.requestLayout()
+                    it.bottomMargin = (dpBase * dp).toInt() + navBarBottom
+                    fab.requestLayout()
                 }
             }
-            (b.btnExportHtml.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams)?.let {
-                it.bottomMargin = (80 * resources.displayMetrics.density).toInt() + bars.bottom
-                b.btnExportHtml.requestLayout()
-            }
+            setBottomMargin(b.btnDevTools, 16)
+            setBottomMargin(b.btnTools, 16)
+            setBottomMargin(b.btnExportHtml, 92)
+            setBottomMargin(b.btnPickerFloat, 148)
             WindowInsetsCompat.CONSUMED
         }
 
@@ -99,6 +105,7 @@ class MainActivity : AppCompatActivity() {
         setupBackHandler()
         setupDetector()
         setupMotion()
+        setupDownloadProgress()
         observeViewModel()    // H2: observe StateFlow
         renderTabStrip()
 
@@ -129,6 +136,41 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // In-app mirror of the foreground download notification.
+    private fun setupDownloadProgress() {
+        b.btnDownloadCancel.setOnClickListener {
+            com.aho.streambrowser.feature.downloader.hls.HlsDownloader.stopDownload(this)
+        }
+        lifecycleScope.launch {
+            com.aho.streambrowser.feature.downloader.hls.HlsDownloader.downloadState.collect { state ->
+                val active = when (state.status) {
+                    DownloadStatus.IDLE, DownloadStatus.SUCCESS, DownloadStatus.ERROR -> false
+                    else -> true
+                }
+                b.downloadCard.isVisible = active ||
+                    (state.status == DownloadStatus.SUCCESS && state.outputPath.isNotBlank())
+                when (state.status) {
+                    DownloadStatus.SUCCESS -> {
+                        b.downloadProgress.progress = 100
+                        b.tvDownloadStatus.text = "✅ ${state.message}"
+                        b.downloadCard.postDelayed({ b.downloadCard.isVisible = false }, 3500)
+                    }
+                    DownloadStatus.ERROR -> {
+                        b.tvDownloadStatus.text = "❌ ${state.message}"
+                        b.downloadCard.postDelayed({ b.downloadCard.isVisible = false }, 5000)
+                    }
+                    else -> {
+                        b.tvDownloadTitle.text = "Đang tải HLS… ${state.downloadedSegments}/${state.totalSegments}"
+                            .takeIf { state.totalSegments > 0 } ?: "Đang tải HLS…"
+                        b.tvDownloadStatus.text = state.message
+                        b.downloadProgress.isIndeterminate = state.progress == 0
+                        b.downloadProgress.progress = state.progress
+                    }
+                }
+            }
+        }
+    }
+
     // H2: Observe StateFlow from ViewModel
     private fun observeViewModel() {
         lifecycleScope.launch {
@@ -153,6 +195,10 @@ class MainActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 when {
+                    // Overlays on top of the page consume back first.
+                    devToolsOverlay?.isVisible == true -> devToolsOverlay?.hide()
+                    ElementPickerManager.isPickerActive() ->
+                        ElementPickerManager.deactivate(b.webView)
                     b.webView.canGoBack() -> b.webView.goBack()
                     else -> { isEnabled = false; onBackPressedDispatcher.onBackPressed() }
                 }
@@ -168,7 +214,11 @@ class MainActivity : AppCompatActivity() {
             domStorageEnabled                = true
             databaseEnabled                  = true
             allowFileAccess                  = false
-            mixedContentMode                 = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            // MIXED_CONTENT_ALWAYS_ALLOW let active network attackers downgrade HTTPS pages to
+            // HTTP resources (and made the lock icon meaningless). COMPATIBILITY_MODE lets the
+            // WebView decide per-resource: it blocks the most dangerous mixed content while still
+            // allowing legacy players that load a few passive HTTP assets.
+            mixedContentMode                 = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             mediaPlaybackRequiresUserGesture = false
             userAgentString                  = mobileUA
             setSupportZoom(true); builtInZoomControls = true; displayZoomControls = false
@@ -201,10 +251,10 @@ class MainActivity : AppCompatActivity() {
             }}
         )
         b.swipeRefresh.setColorSchemeColors(0xFF24D29B.toInt(), 0xFF5B8CFF.toInt())
-        b.swipeRefresh.setOnRefreshListener {
-            b.webView.reload()
-            b.swipeRefresh.postDelayed({ b.swipeRefresh.isRefreshing = false }, 500)
-        }
+        // Only the real page lifecycle (onPageStarted/Finished + progress=100) controls the
+        // spinner now. The old postDelayed(500ms) hid it regardless of whether loading had
+        // actually finished, and it fought the WebView's own vertical scroll.
+        b.swipeRefresh.setOnRefreshListener { b.webView.reload() }
         b.webView.setDownloadListener(DownloadListener { url, ua, cd, mime, _ ->
             downloadFile(url, ua, cd, mime)
         })
@@ -261,9 +311,16 @@ class MainActivity : AppCompatActivity() {
         b.btnBookmark.setOnLongClickListener { showBookmarkHistory(); true }
         b.btnDevTools.setOnClickListener     { openDevTools() }
         b.btnDevTools.setOnLongClickListener { showQuickActions(); true }
-        b.btnExportHtml.setOnClickListener { htmlExporter.exportLivePage() }
-        b.btnPickerFloat.setOnClickListener { toggleHtmlPicker() }
+        b.btnExportHtml.setOnClickListener {
+            htmlExporter.exportLivePage(); collapseTools()
+        }
+        b.btnPickerFloat.setOnClickListener {
+            toggleHtmlPicker()
+            // Keep the picker FAB visible while active; collapse the other tools.
+            toolsExpanded = false; applyToolsVisibility()
+        }
         b.btnPickerFloat.setOnLongClickListener { activateRegionPicker(); true }
+        b.btnTools.setOnClickListener { toggleTools() }
     }
 
     private fun setupDetector() {
@@ -529,8 +586,8 @@ class MainActivity : AppCompatActivity() {
 
     /** Opens the visible picker immediately; the FAB stays available for cancel/retry. */
     fun activatePicker() {
-        b.btnPickerFloat.isVisible = true
         if (!ElementPickerManager.isPickerActive()) toggleHtmlPicker()
+        applyToolsVisibility()
     }
 
     private fun activateRegionPicker() {
@@ -538,21 +595,49 @@ class MainActivity : AppCompatActivity() {
         ElementPickerManager.activateRegion(b.webView) {
             Toast.makeText(this, "Kéo để chọn một vùng HTML", Toast.LENGTH_LONG).show()
         }
+        applyToolsVisibility()
     }
 
     private fun toggleHtmlPicker() {
         ElementPickerManager.toggle(
             webView = b.webView,
             onActivated = {
-                b.btnPickerFloat.isVisible = true
+                applyToolsVisibility()
                 Toast.makeText(this, "Chạm vào vùng trên trang để xem hoặc xuất HTML", Toast.LENGTH_LONG).show()
             },
-            onDeactivated = { Toast.makeText(this, "Đã tắt chọn vùng", Toast.LENGTH_SHORT).show() }
+            onDeactivated = {
+                applyToolsVisibility()
+                Toast.makeText(this, "Đã tắt chọn vùng", Toast.LENGTH_SHORT).show()
+            }
         )
     }
 
     private fun hideKeyboard() {
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(b.etUrl.windowToken, 0)
+    }
+
+    // ── Expandable left-side tools FAB ────────────────────────────────────────
+    private fun toggleTools() {
+        toolsExpanded = !toolsExpanded
+        applyToolsVisibility()
+    }
+
+    private fun collapseTools() {
+        toolsExpanded = false
+        applyToolsVisibility()
+    }
+
+    private fun applyToolsVisibility() {
+        val show = toolsExpanded || ElementPickerManager.isPickerActive()
+        listOf(b.btnExportHtml, b.btnPickerFloat).forEach { fab ->
+            fab.visibility = if (show) View.VISIBLE else View.INVISIBLE
+            fab.alpha = if (show) 1f else 0f
+            fab.scaleX = if (show) 1f else 0.6f
+            fab.scaleY = if (show) 1f else 0.6f
+            fab.isClickable = show
+        }
+        // Rotate the main tools FAB to signal open/closed.
+        b.btnTools.animate().rotation(if (toolsExpanded) 45f else 0f).setDuration(180).start()
     }
 
     fun copyToClipboard(text: String, msg: String) {

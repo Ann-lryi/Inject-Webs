@@ -18,8 +18,24 @@ class StreamJsBridge(
         return url.startsWith("http://") || url.startsWith("https://") || url.startsWith("ws://") || url.startsWith("wss://") || url.startsWith("blob:")
     }
 
+    /**
+     * Defense-in-depth: addJavascriptInterface exposes these methods to EVERY frame/script
+     * loaded in the WebView, including third-party iframes and ad scripts. All entry points
+     * already sanitize their inputs; we additionally rate-limit calls so a malicious/compromised
+     * page cannot flood the detector (which runs on the binder/UI thread) to cause an ANR.
+     */
+    private var callCount = 0
+    private var windowStart = 0L
+    @Synchronized private fun rateLimit(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - windowStart > 1000L) { windowStart = now; callCount = 0 }
+        return ++callCount <= MAX_CALLS_PER_SECOND
+    }
+    companion object { private const val MAX_CALLS_PER_SECOND = 250 }
+
     @JavascriptInterface
     fun onRequest(url: String, source: String, method: String) {
+        if (!rateLimit()) return
         val sUrl = sanitizeInput(url)
         if (!isValidUrl(sUrl)) return
         detector.reportFromJs(sUrl, sanitizeInput(source), sanitizeInput(method), getCurrentUrl())
@@ -31,6 +47,7 @@ class StreamJsBridge(
      *  are often JSON, and sanitizeInput's quote-stripping would corrupt that structure. */
     @JavascriptInterface
     fun onRequestPayload(url: String, headersJson: String, body: String) {
+        if (!rateLimit()) return
         val sUrl = sanitizeInput(url)
         if (!isValidUrl(sUrl)) return
         detector.updateRequestPayload(sUrl, headersJson, body)
@@ -39,6 +56,7 @@ class StreamJsBridge(
     /** B4: WebSocket event capture */
     @JavascriptInterface
     fun onWebSocket(direction: String, wsUrl: String, data: String) {
+        if (!rateLimit()) return
         val sWsUrl = sanitizeInput(wsUrl)
         if (!isValidUrl(sWsUrl)) return
         
@@ -53,12 +71,14 @@ class StreamJsBridge(
     /** E1+E2: SPA navigation detected (history.pushState / popstate) */
     @JavascriptInterface
     fun onSpaNavigation(url: String) {
+        if (!rateLimit()) return
         detector.onSpaNavigate(sanitizeInput(url))
     }
 
     /** CỰC KHỦNG: Crypto API Hooking Capture (SubtleCrypto / CryptoJS) */
     @JavascriptInterface
     fun onCryptoKeyIntercepted(algo: String, hexKey: String, hexIv: String) {
+        if (!rateLimit()) return
         val safeAlgo = sanitizeInput(algo)
         val safeKey = sanitizeInput(hexKey)
         val safeIv = sanitizeInput(hexIv)
@@ -76,6 +96,7 @@ class StreamJsBridge(
 
     @JavascriptInterface
     fun onCryptoKey(algorithm: String, key: String, iv: String) {
+        if (!rateLimit()) return
         if (key.isBlank()) return
         detector.addCryptoKey(CryptoKeyCapture(
             algorithm = algorithm, key = key, iv = iv, pageUrl = getCurrentUrl()
@@ -85,21 +106,25 @@ class StreamJsBridge(
     /** Encrypted XHR response body */
     @JavascriptInterface
     fun onResponseBody(url: String, statusCode: Int, contentType: String, body: String) {
+        if (!rateLimit()) return
         detector.addResponseBody(url, statusCode, contentType, body)
     }
 
     @JavascriptInterface
     fun onWasmDetected(url: String) {
+        if (!rateLimit()) return
         detector.onWasmDetected(sanitizeInput(url))
     }
 
     @JavascriptInterface
     fun onServiceWorkerDetected(scriptUrl: String) {
+        if (!rateLimit()) return
         detector.onServiceWorkerDetected(sanitizeInput(scriptUrl))
     }
 
     @JavascriptInterface
     fun onStreamFound(url: String, source: String) {
+        if (!rateLimit()) return
         detector.reportFromJs(url, source, "GET", getCurrentUrl())
     }
 }

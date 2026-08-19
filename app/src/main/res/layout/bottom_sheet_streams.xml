@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
@@ -31,19 +32,17 @@
         android:layout_height="0.5dp"
         android:background="@color/divider"/>
 
-    <androidx.core.widget.NestedScrollView
+    <!-- RecyclerView directly inside the sheet (no NestedScrollView wrapper):
+         NestedScrollView forced nestedScrollingEnabled=false which defeated view recycling,
+         so all detected stream items existed in memory at once. Let the sheet own scrolling. -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recycler"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:maxHeight="520dp">
-
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/recycler"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:nestedScrollingEnabled="false"
-            android:paddingHorizontal="12dp"
-            android:paddingBottom="20dp"/>
-
-    </androidx.core.widget.NestedScrollView>
+        android:minHeight="120dp"
+        android:paddingHorizontal="12dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="20dp"
+        android:clipToPadding="false"/>
 
 </LinearLayout>

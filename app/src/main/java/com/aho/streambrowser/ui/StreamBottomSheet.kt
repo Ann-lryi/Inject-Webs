@@ -38,6 +38,24 @@ class StreamBottomSheet(
         b.recycler.layoutManager = LinearLayoutManager(requireContext())
         b.recycler.adapter = adapter
         adapter.submitList(streams)
+
+        // Empty state — the list can legitimately be empty when the sheet is opened before
+        // any stream has been detected. Previously the sheet just showed "0 luồng" with blank body.
+        if (streams.isEmpty()) {
+            b.tvCount.text = "Chưa phát hiện luồng nào"
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Set a sensible peek height proportional to screen instead of the fixed 520dp cap,
+        // so small screens aren't cramped and large screens don't waste vertical space.
+        val dialog = dialog as? com.google.android.material.bottomsheet.BottomSheetDialog ?: return
+        val sheet = dialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet) ?: return
+        val behavior = com.google.android.material.bottomsheet.BottomSheetBehavior.from(sheet)
+        val peek = (resources.displayMetrics.heightPixels * 0.55f).toInt()
+        behavior.peekHeight = peek
+        behavior.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_COLLAPSED
     }
 
     private fun copyUrl(item: StreamItem) {
