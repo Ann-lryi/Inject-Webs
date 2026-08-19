@@ -19,23 +19,29 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # The wrapper jar is committed to the repo, but as a safety net verify it matches the
-      # known-good SHA-256 for Gradle 8.4 and re-download only if it is missing/corrupt. The old
-      # step unconditionally fetched a jar over HTTPS from an unversioned-looking URL and never
-      # verified it — a supply-chain risk for every build.
-      - name: Verify Gradle Wrapper JAR
+      # The committed gradle-wrapper.jar is currently a corrupt placeholder (21 bytes), which
+      # makes `./gradlew` unrunnable. Restore the genuine wrapper for the exact Gradle version
+      # pinned in gradle-wrapper.properties (8.4) by downloading it from the official, tag-pinned
+      # Gradle source over HTTPS. We do NOT hardcode a checksum here: an earlier attempt used a
+      # guessed SHA and broke CI. The download is from a fixed tag on the official Gradle repo,
+      # and the wrapper distribution itself is verified by Gradle after download. To eliminate the
+      # download entirely (recommended), run `./gradlew wrapper --gradle-version 8.4` once locally
+      # with a real JDK and commit the resulting gradle/wrapper/gradle-wrapper.jar.
+      - name: Restore Gradle Wrapper JAR
         run: |
-          EXPECTED_SHA="7d498edd85d4f27afd3612b129a7f55d1c5915d876f59afd8c592fbe167d9e0b"
           JAR=gradle/wrapper/gradle-wrapper.jar
-          ACTUAL_SHA=$(sha256sum "$JAR" 2>/dev/null | awk '{print $1}')
-          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
-            echo "Wrapper jar missing or checksum mismatch — re-downloading Gradle 8.4 wrapper"
-            curl -fsSL \
+          # If the wrapper jar is missing or clearly invalid (< 10 KB), re-fetch it.
+          if [ ! -s "$JAR" ] || [ "$(stat -c%s "$JAR" 2>/dev/null || echo 0)" -lt 10240 ]; then
+            echo "Re-downloading Gradle 8.4 wrapper jar from official source..."
+            curl -fSL --retry 3 \
               "https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradle/wrapper/gradle-wrapper.jar" \
               -o "$JAR"
-            NEW_SHA=$(sha256sum "$JAR" | awk '{print $1}')
-            test "$NEW_SHA" = "$EXPECTED_SHA" || { echo "Downloaded wrapper failed checksum"; exit 1; }
           fi
+          ls -la "$JAR"
+          chmod +x ./gradlew
+
+      - name: Validate Gradle Wrapper
+        uses: gradle/actions/wrapper-validation@v4
 
       - name: Cache Gradle
         uses: actions/cache@v4
