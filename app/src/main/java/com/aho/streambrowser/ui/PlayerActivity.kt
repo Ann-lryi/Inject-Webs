@@ -13,6 +13,7 @@ import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.aho.streambrowser.databinding.ActivityPlayerBinding
@@ -53,6 +54,9 @@ class PlayerActivity : AppCompatActivity() {
         val mediaItem   = MediaItem.fromUri(stream.url)
         val mediaSource = when (stream.type) {
             StreamType.HLS  -> HlsMediaSource.Factory(dataFactory).createMediaSource(mediaItem)
+            // DASH was declared as supported but previously fell through to ProgressiveMediaSource,
+            // which cannot parse MPD manifests. media3-exoplayer-dash is already on the classpath.
+            StreamType.DASH -> DashMediaSource.Factory(dataFactory).createMediaSource(mediaItem)
             else            -> ProgressiveMediaSource.Factory(dataFactory).createMediaSource(mediaItem)
         }
 
