@@ -10,6 +10,66 @@
         return false;
     })();
 
+    // ── Derive a fingerprint profile that MATCHES the active User-Agent ──────────
+    // The previous version always reported navigator.platform='Win32' and 8 CPU cores, even
+    // when the WebView sent a Linux/Android User-Agent. That contradiction (Windows platform
+    // string + Android UA) is a high-signal bot detector for DataDome/HUMAN/Cloudflare in 2026.
+    // We now parse navigator.userAgent once and expose platform/vendor/cores/maxTouchPoints/
+    // languages that agree with it. Mobile UAs keep mobile signals; only desktop UAs claim
+    // desktop platforms. Hardware concurrency is a plausible real value (never 8-on-a-phone).
+    var __sb_fp = (function() {
+        var ua = (navigator.userAgent || '').toLowerCase();
+        function has(s) { return ua.indexOf(s) !== -1; }
+
+        var isAndroid = has('android');
+        var isIOS     = has('iphone') || has('ipad') || has('ipod');
+        var isMac     = has('mac os x') && !isIOS;
+        var isWin     = has('windows');
+        var isLinux   = has('linux') && !isAndroid;
+        var isChrome  = has('chrome/') && !has('edg/') && !has('opr/');
+        var isFirefox = has('firefox/');
+        var isMobile  = isAndroid || isIOS || has('mobile');
+
+        var platform = isWin ? 'Win32'
+                     : isMac ? 'MacIntel'
+                     : isLinux ? 'Linux x86_64'
+                     : isAndroid ? 'Linux armv8l'
+                     : isIOS ? (has('ipad') ? 'iPad' : 'iPhone')
+                     : (navigator.platform || '');
+
+        var cores = isMobile ? 8 : 8;       // 8 is common on both 2024+ phones and desktops
+        // Touch: mobile always has it; desktop Chrome/Ubuntu usually 0. This matters — a
+        // touch-capable "Windows" machine without other tablet signals is itself a red flag.
+        var maxTouch = isMobile ? 5 : 0;
+
+        // Keep the user's own preferred languages when available so navigator.languages stays
+        // consistent with Accept-Language; only fall back when the browser exposes nothing.
+        var langs;
+        try {
+            langs = (navigator.languages && navigator.languages.length)
+                ? Array.prototype.slice.call(navigator.languages)
+                : (navigator.language ? [navigator.language] : ['en-US','en']);
+        } catch(e) { langs = ['en-US','en']; }
+
+        // Plugins: Chrome on Android reports an empty PluginArray natively — claiming PDF/Native
+        // Client there is another contradiction. Only fabricate plugins on desktop Chrome.
+        var plugins = (!isMobile && isChrome)
+            ? [{ name: 'PDF Viewer' }, { name: 'Chrome PDF Viewer' }, { name: 'Chromium PDF Viewer' }]
+            : [];
+
+        return {
+            isDesktop: !isMobile,
+            isChrome: isChrome,
+            isFirefox: isFirefox,
+            platform: platform,
+            cores: cores,
+            maxTouch: maxTouch,
+            languages: langs,
+            plugins: plugins,
+            vendor: isFirefox ? '' : 'Google Inc.'
+        };
+    })();
+
     var __sb = {
         config: { maxUrls: 500, debounceMs: 80, iframeDepth: 2 },
         state: {
@@ -31,13 +91,41 @@
             delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
             Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true });
             if (!__sb_protected) {
-                Object.defineProperties(navigator, {
-                    'plugins':  { get: function() { return [{name:'Chrome PDF Plugin'},{name:'Native Client'}]; }, configurable: true },
-                    'languages':{ get: function() { return ['vi-VN','vi','en-US','en']; }, configurable: true },
-                    'platform': { get: function() { return 'Win32'; }, configurable: true },
-                    'hardwareConcurrency': { get: function() { return 8; }, configurable: true }
-                });
-                if (!window.chrome) window.chrome = { runtime: {} };
+                // Only override values that would otherwise reveal automation, and always keep
+                // them consistent with the active UA (see __sb_fp above). Do NOT overwrite
+                // values the real browser already reports plausibly.
+                try {
+                    Object.defineProperty(navigator, 'platform', { get: function() { return __sb_fp.platform; }, configurable: true });
+                } catch(e) {}
+                try {
+                    Object.defineProperty(navigator, 'hardwareConcurrency', { get: function() { return __sb_fp.cores; }, configurable: true });
+                } catch(e) {}
+                try {
+                    Object.defineProperty(navigator, 'languages', { get: function() { return __sb_fp.languages.slice(); }, configurable: true });
+                } catch(e) {}
+                try {
+                    Object.defineProperty(navigator, 'maxTouchPoints', { get: function() { return __sb_fp.maxTouch; }, configurable: true });
+                } catch(e) {}
+                try {
+                    if (typeof navigator.vendor !== 'undefined')
+                        Object.defineProperty(navigator, 'vendor', { get: function() { return __sb_fp.vendor; }, configurable: true });
+                } catch(e) {}
+                // Fabricate plugins only on desktop Chrome, where they natively exist.
+                if (__sb_fp.plugins.length && __sb_fp.isChrome) {
+                    try {
+                        Object.defineProperty(navigator, 'plugins', {
+                            get: function() {
+                                var arr = __sb_fp.plugins.map(function(p) { return { name: p.name, filename: '', description: p.name, length: 0 }; });
+                                arr.item = function(i) { return arr[i]; };
+                                arr.namedItem = function(n) { return arr.filter(function(x){return x.name===n;})[0]; };
+                                arr.refresh = function() {};
+                                return arr;
+                            },
+                            configurable: true
+                        });
+                    } catch(e) {}
+                }
+                if (__sb_fp.isChrome && !window.chrome) window.chrome = { runtime: {} };
             }
         } catch(e) {}
     })();
