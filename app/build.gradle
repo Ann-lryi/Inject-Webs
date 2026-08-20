@@ -40,6 +40,9 @@ dependencies {
     implementation 'androidx.constraintlayout:constraintlayout:2.2.1'
     implementation 'androidx.coordinatorlayout:coordinatorlayout:1.2.0'
     implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
+    // androidx.webkit: DocumentStartJavaScript lets us run the desktop-spoof script
+    // BEFORE any page script (WebViewClient.onPageStarted runs too late to hide traces).
+    implementation 'androidx.webkit:webkit:1.12.1'
     implementation 'androidx.activity:activity-ktx:1.9.3'
     implementation 'androidx.fragment:fragment-ktx:1.8.5'
 

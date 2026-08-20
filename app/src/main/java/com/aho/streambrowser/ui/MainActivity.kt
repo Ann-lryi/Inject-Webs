@@ -471,14 +471,51 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ── Extras ────────────────────────────────────────────────────────────────
+    // Document-start desktop spoof script (assets/desktop_spoof.js). Injected via
+    // androidx.webkit so it runs before any page script; toggled on/off with desktop mode.
+    private var desktopScriptHandle: androidx.webkit.ScriptReferenceCompat? = null
+    private val DESKTOP_UA =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
     private fun toggleDesktopMode() {
         isDesktopMode = !isDesktopMode
-        b.webView.settings.userAgentString = if (isDesktopMode)
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36"
-        else mobileUA
+        applyDesktopMode(isDesktopMode)
         b.btnDesktop.alpha = if (isDesktopMode) 1f else 0.5f
         b.webView.reload()
-        Toast.makeText(this, if (isDesktopMode) "🖥 Desktop" else "📱 Mobile", Toast.LENGTH_SHORT).show()
+        Toast.makeText(
+            this,
+            if (isDesktopMode) "🖥 Desktop giả lập" else "📱 Mobile",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    private fun applyDesktopMode(enabled: Boolean) {
+        // 1) UA + desktop-friendly WebView settings. Wide viewport/overview are kept on for
+        //    both modes (modern responsive sites need them); desktop mainly changes the UA +
+        //    the document-start spoof below.
+        b.webView.settings.userAgentString = if (enabled) DESKTOP_UA else mobileUA
+        b.webView.settings.useWideViewPort = true
+        b.webView.settings.loadWithOverviewMode = true
+        b.webView.settings.domStorageEnabled = true
+
+        // 2) document-start JS spoof (navigator/screen/touch/viewport). Requires the
+        //    androidx.webkit feature; on very old WebViews without it we still change the UA.
+        if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPTS)) {
+            try {
+                if (enabled) {
+                    val js = assets.open("desktop_spoof.js").bufferedReader().use { it.readText() }
+                    desktopScriptHandle?.remove()
+                    desktopScriptHandle = androidx.webkit.WebViewCompat.addDocumentStartJavaScript(
+                        b.webView, js, setOf("*")
+                    )
+                } else {
+                    desktopScriptHandle?.remove()
+                    desktopScriptHandle = null
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("DesktopMode", "document-start script failed", e)
+            }
+        }
     }
 
     private fun toggleIncognito() {
