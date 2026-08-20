@@ -100,6 +100,44 @@ class DevToolsOverlay(
     init {
         setBackgroundColor(Color.TRANSPARENT)
         setupOverlay()
+        // FIX (touch leak to WebView): the overlay is added directly to the decor view on top
+        // of the WebView. A touch on the dim area (above the panel) must dismiss AND be eaten,
+        // otherwise it passed through to the WebView behind. But touches inside the panel must
+        // still reach its children, so we only return true when the touch lands outside.
+        isClickable = true
+        isFocusable = true
+        setOnTouchListener { _, event ->
+            val panelTop = panelView.top + panelView.translationY
+            val outside = event.y < panelTop
+            if (outside && event.action == android.view.MotionEvent.ACTION_UP) hide()
+            outside
+        }
+        applyImeInsets()
+    }
+
+    // FIX (keyboard covers inputs): the overlay lives in the decor view, so the activity's
+    // adjustResize doesn't shrink it when the IME appears. Listen for IME insets and lift the
+    // panel / pad the content so focused EditTexts stay above the keyboard.
+    private fun applyImeInsets() {
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(this) { _, insets ->
+            val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
+            val sys = insets.getInsets(
+                androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                    androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+            )
+            val bottomPad = (ime.bottom - sys.bottom).coerceAtLeast(0)
+            contentArea.setPadding(
+                contentArea.paddingLeft, contentArea.paddingTop,
+                contentArea.paddingRight, bottomPad + dp(8)
+            )
+            val lp = panelView.layoutParams as? android.view.ViewGroup.MarginLayoutParams
+            if (lp != null) {
+                val topFraction = if (ime.bottom > 0) 0.12f else defaultTopFraction
+                lp.topMargin = (screenHeight * topFraction).toInt()
+                panelView.layoutParams = lp
+            }
+            insets
+        }
     }
 
     // ── Setup ─────────────────────────────────────────────────────────────────
@@ -1830,6 +1868,12 @@ class DevToolsOverlay(
     }
 
     fun hide() {
+        // If an input inside the panel had focus, drop it and close the keyboard so it doesn't
+        // linger over the WebView after the panel slides away.
+        requestFocus()
+        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+        imm?.hideSoftInputFromWindow(windowToken, 0)
+
         val panelH = screenHeight * (1f - defaultTopFraction)
         val startY = panelView.translationY
         ObjectAnimator.ofFloat(panelView, "translationY", startY, panelH)

@@ -82,12 +82,15 @@ class MainActivity : AppCompatActivity() {
 
         ViewCompat.setOnApplyWindowInsetsListener(b.root) { _, wi ->
             val bars = wi.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val ime = wi.getInsets(WindowInsetsCompat.Type.ime())
             b.toolbar.updatePadding(top = bars.top)
             val dp = resources.displayMetrics.density
-            val navBarBottom = bars.bottom
+            // When the keyboard is open its bottom inset exceeds the nav bar; use that so the
+            // WebView/FABs/download card lift above the keyboard instead of being covered by it.
+            val bottomInset = maxOf(ime.bottom, bars.bottom)
             fun setBottomMargin(fab: View, dpBase: Int) {
                 (fab.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams)?.let {
-                    it.bottomMargin = (dpBase * dp).toInt() + navBarBottom
+                    it.bottomMargin = (dpBase * dp).toInt() + bottomInset
                     fab.requestLayout()
                 }
             }
@@ -95,6 +98,13 @@ class MainActivity : AppCompatActivity() {
             setBottomMargin(b.btnTools, 16)
             setBottomMargin(b.btnExportHtml, 92)
             setBottomMargin(b.btnPickerFloat, 148)
+            // Lift the in-app download card and pad the WebView container so focused inputs
+            // (both the address bar and fields inside pages) stay visible above the keyboard.
+            (b.downloadCard.layoutParams as? androidx.coordinatorlayout.widget.CoordinatorLayout.LayoutParams)?.let {
+                it.bottomMargin = (88 * dp).toInt() + bottomInset
+                b.downloadCard.requestLayout()
+            }
+            b.swipeRefresh.setPadding(0, 0, 0, if (ime.bottom > 0) ime.bottom - bars.bottom else 0)
             WindowInsetsCompat.CONSUMED
         }
 
@@ -255,6 +265,10 @@ class MainActivity : AppCompatActivity() {
         // spinner now. The old postDelayed(500ms) hid it regardless of whether loading had
         // actually finished, and it fought the WebView's own vertical scroll.
         b.swipeRefresh.setOnRefreshListener { b.webView.reload() }
+        // Only allow pull-to-refresh when the WebView is scrolled all the way to the top.
+        // Without this, pulling down while reading the middle of a page also triggered reload
+        // and fought the WebView's vertical scroll.
+        b.swipeRefresh.setOnChildScrollUpCallback { _, _ -> b.webView.scrollY > 0 }
         b.webView.setDownloadListener(DownloadListener { url, ua, cd, mime, _ ->
             downloadFile(url, ua, cd, mime)
         })
