@@ -473,7 +473,7 @@ class MainActivity : AppCompatActivity() {
     // ── Extras ────────────────────────────────────────────────────────────────
     // Document-start desktop spoof script (assets/desktop_spoof.js). Injected via
     // androidx.webkit so it runs before any page script; toggled on/off with desktop mode.
-    private var desktopScriptHandle: Any? = null = null
+    private var desktopScriptHandle: Any? = null
     private val DESKTOP_UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
