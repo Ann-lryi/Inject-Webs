@@ -490,32 +490,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applyDesktopMode(enabled: Boolean) {
-        // 1) UA + desktop-friendly WebView settings. Wide viewport/overview are kept on for
-        //    both modes (modern responsive sites need them); desktop mainly changes the UA +
-        //    the document-start spoof below.
         b.webView.settings.userAgentString = if (enabled) DESKTOP_UA else mobileUA
         b.webView.settings.useWideViewPort = true
         b.webView.settings.loadWithOverviewMode = true
         b.webView.settings.domStorageEnabled = true
 
-        // 2) document-start JS spoof (navigator/screen/touch/viewport). Requires the
-        //    androidx.webkit feature; on very old WebViews without it we still change the UA.
-        if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPTS)) {
-            try {
-            }
-                if (enabled) {
-                    val js = assets.open("desktop_spoof.js").bufferedReader().use { it.readText() }
-                    desktopScriptHandle?.remove()
-                    desktopScriptHandle = androidx.webkit.WebViewCompat.addDocumentStartJavaScript(
-                        b.webView, js, setOf("*")
-                    )
-                } else {
-                    desktopScriptHandle?.remove()
-                    desktopScriptHandle = null
+        try {
+            if (androidx.webkit.WebViewFeature.isFeatureSupported(
+                    androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPTS
+                )
+            ) {
+                try {
+                    if (enabled) {
+                        val js = assets.open("desktop_spoof.js").bufferedReader().use { it.readText() }
+                        desktopScriptHandle?.remove()
+                        desktopScriptHandle = androidx.webkit.WebViewCompat
+                            .addDocumentStartJavaScript(b.webView, js, setOf("*"))
+                    } else {
+                        desktopScriptHandle?.remove()
+                        desktopScriptHandle = null
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("DesktopMode", "document-start script failed", e)
                 }
-            } catch (e: Exception) {
-                android.util.Log.w("DesktopMode", "document-start script failed", e)
             }
+        } catch (e: Throwable) {
+            android.util.Log.w("DesktopMode", "document-start spoof unavailable", e)
         }
     }
 
