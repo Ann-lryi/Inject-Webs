@@ -160,7 +160,7 @@
         android:layout_gravity="bottom|start"
         android:layout_marginStart="16dp"
         android:layout_marginBottom="92dp"
-        android:src="@drawable/ic_devtools"
+        android:src="@drawable/ic_code"
         android:contentDescription="Xuat HTML"
         android:visibility="invisible"
         app:backgroundTint="@color/accent_blue" app:tint="#FFF"
@@ -172,7 +172,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|start"
         android:layout_margin="16dp"
-        android:src="@drawable/ic_devtools"
+        android:src="@drawable/ic_tools"
         android:contentDescription="Cong cu"
         app:backgroundTint="@color/surface3" app:tint="#FFF"
         app:elevation="8dp"/>

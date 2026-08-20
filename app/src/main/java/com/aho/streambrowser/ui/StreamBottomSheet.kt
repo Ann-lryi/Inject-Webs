@@ -56,6 +56,10 @@ class StreamBottomSheet(
         val peek = (resources.displayMetrics.heightPixels * 0.55f).toInt()
         behavior.peekHeight = peek
         behavior.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_COLLAPSED
+        // Light pop-in for the sheet content (Lucide-style: quick, overshoot-free).
+        sheet.animation = android.view.animation.AnimationUtils.loadAnimation(
+            requireContext(), com.aho.streambrowser.R.anim.slide_up_fade
+        )
     }
 
     private fun copyUrl(item: StreamItem) {
