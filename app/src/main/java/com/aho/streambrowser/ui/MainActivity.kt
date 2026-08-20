@@ -473,7 +473,7 @@ class MainActivity : AppCompatActivity() {
     // ── Extras ────────────────────────────────────────────────────────────────
     // Document-start desktop spoof script (assets/desktop_spoof.js). Injected via
     // androidx.webkit so it runs before any page script; toggled on/off with desktop mode.
-    private var desktopScriptHandle: androidx.webkit.ScriptReferenceCompat? = null
+    private var desktopScriptHandle: androidx.webkit.ScriptReference? = null
     private val DESKTOP_UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
@@ -502,6 +502,7 @@ class MainActivity : AppCompatActivity() {
         //    androidx.webkit feature; on very old WebViews without it we still change the UA.
         if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPTS)) {
             try {
+            }
                 if (enabled) {
                     val js = assets.open("desktop_spoof.js").bufferedReader().use { it.readText() }
                     desktopScriptHandle?.remove()
