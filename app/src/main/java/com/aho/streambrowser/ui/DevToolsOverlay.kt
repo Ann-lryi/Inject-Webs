@@ -171,6 +171,13 @@ class DevToolsOverlay(
             translationY = (screenHeight * (1f - defaultTopFraction))
         }
 
+        // HACKER_MODE: matrix rain backdrop behind panel
+        val matrix = MatrixRainView(context).apply {
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+            alpha = 0.10f
+        }
+        panelView.addView(matrix)
+
         // Drag handle — tap/drag to resize or close
         panelView.addView(buildDragHandle())
 
@@ -190,7 +197,7 @@ class DevToolsOverlay(
         // Content
         contentArea = FrameLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
-            setBackgroundColor(BG_PANEL)
+            setBackgroundColor(0xCC0D0D0D.toInt())
         }
         panelView.addView(contentArea)
         addView(panelView)

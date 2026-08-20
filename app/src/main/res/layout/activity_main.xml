@@ -86,6 +86,16 @@
                     android:background="@drawable/bg_icon_btn"
                     android:scaleType="center" android:contentDescription="Bookmark"/>
 
+                <TextView android:id="@+id/tvStealth"
+                    android:layout_width="wrap_content" android:layout_height="20dp"
+                    android:gravity="center"
+                    android:paddingHorizontal="6dp"
+                    android:text="STEALTH" android:textColor="#0A0A0A"
+                    android:textSize="9sp" android:textStyle="bold"
+                    android:background="#24D29B"
+                    android:visibility="gone"
+                    android:layout_marginStart="4dp"/>
+
             </LinearLayout>
         </LinearLayout>
 

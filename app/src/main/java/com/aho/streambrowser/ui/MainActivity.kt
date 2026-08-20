@@ -458,16 +458,23 @@ class MainActivity : AppCompatActivity() {
         b.btnForward.isEnabled = b.webView.canGoForward(); b.btnForward.alpha = if (b.webView.canGoForward()) 1f else 0.34f
     }
 
+    private var lastStreamCount = 0
     private fun updateFab() {
         val s = detector.streamCount()
         val r = detector.requestCount()
-
-        // Phục hồi logic nguyên thủy cho nút DevTools để không gây lỗi trùng lặp
-        when { 
+        when {
             s > 0 -> { b.btnDevTools.text = "● $s Stream"; b.btnDevTools.extend() }
             r > 0 -> { b.btnDevTools.text = "Lab ($r)"; b.btnDevTools.shrink() }
             else -> { b.btnDevTools.text = "Stream Lab"; b.btnDevTools.shrink() }
         }
+        if (s > 0 && lastStreamCount == 0) {
+            val v = b.btnDevTools
+            v.animate().cancel()
+            v.animate().scaleX(1.15f).scaleY(1.15f).setDuration(120).withEndAction {
+                v.animate().scaleX(1f).scaleY(1f).setDuration(180).start()
+            }.start()
+        }
+        lastStreamCount = s
     }
 
     // ── Extras ────────────────────────────────────────────────────────────────
@@ -481,6 +488,7 @@ class MainActivity : AppCompatActivity() {
         isDesktopMode = !isDesktopMode
         applyDesktopMode(isDesktopMode)
         b.btnDesktop.alpha = if (isDesktopMode) 1f else 0.5f
+        updateStealthBadge()
         b.webView.reload()
         Toast.makeText(
             this,
@@ -538,7 +546,23 @@ class MainActivity : AppCompatActivity() {
             b.webView.settings.cacheMode = WebSettings.LOAD_DEFAULT
             b.toolbar.setBackgroundResource(R.drawable.bg_toolbar_glass)
         }
+        updateStealthBadge()
         Toast.makeText(this, if (isIncognito) "🕵 Incognito ON" else "🔓 OFF", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun updateStealthBadge() {
+        val on = isDesktopMode || isIncognito
+        b.tvStealth.visibility = if (on) View.VISIBLE else View.GONE
+        b.tvStealth.text = when {
+            isDesktopMode && isIncognito -> "STEALTH+"
+            isDesktopMode -> "DESKTOP"
+            else -> "INCOG"
+        }
+        b.tvStealth.setBackgroundColor(when {
+            isDesktopMode && isIncognito -> 0xFF00E5FF.toInt()
+            isDesktopMode -> 0xFF24D29B.toInt()
+            else -> 0xFFFFA500.toInt()
+        })
     }
 
     override fun onUserLeaveHint() {
@@ -706,6 +730,22 @@ class MainActivity : AppCompatActivity() {
         (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
             .setPrimaryClip(ClipData.newPlainText("text", text))
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    // HACKER_MODE: volume keys toggle DevTools
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (event.action == android.view.KeyEvent.ACTION_UP) {
+            when (event.keyCode) {
+                android.view.KeyEvent.KEYCODE_VOLUME_UP -> {
+                    if (devToolsOverlay?.isVisible == true) devToolsOverlay?.hide() else openDevTools()
+                    return true
+                }
+                android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                    devToolsOverlay?.hide(); return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onPause()   { super.onPause();   b.webView.onPause() }
