@@ -473,7 +473,7 @@ class MainActivity : AppCompatActivity() {
     // ── Extras ────────────────────────────────────────────────────────────────
     // Document-start desktop spoof script (assets/desktop_spoof.js). Injected via
     // androidx.webkit so it runs before any page script; toggled on/off with desktop mode.
-    private var desktopScriptHandle: androidx.webkit.ScriptReference? = null
+    private var desktopScriptHandle: Any? = null = null
     private val DESKTOP_UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
@@ -495,28 +495,36 @@ class MainActivity : AppCompatActivity() {
         b.webView.settings.loadWithOverviewMode = true
         b.webView.settings.domStorageEnabled = true
 
-        // Guard every access to the document-start API behind both a feature check and a
-        // try/catch: older Android System WebView versions can throw at class-load time even
-        // when the constant is referenced. If unavailable we still apply the desktop UA above.
         try {
-            if (androidx.webkit.WebViewFeature.isFeatureSupported(
-                    androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPTS
-                )
-            ) {
-                if (enabled) {
-                    val js = assets.open("desktop_spoof.js").bufferedReader().use { it.readText() }
-                    desktopScriptHandle?.remove()
-                    desktopScriptHandle = androidx.webkit.WebViewCompat
-                        .addDocumentStartJavaScript(b.webView, js, setOf("*"))
-                } else {
-                    desktopScriptHandle?.remove()
-                    desktopScriptHandle = null
+            if (androidx.webkit.WebViewFeature.isFeatureSupported("DOCUMENT_START_SCRIPTS")) {
+                try {
+                    if (enabled) {
+                        val js = assets.open("desktop_spoof.js").bufferedReader().use { it.readText() }
+                        removeDesktopHandle()
+                        desktopScriptHandle = androidx.webkit.WebViewCompat::class.java
+                            .getMethod(
+                                "addDocumentStartJavaScript",
+                                android.webkit.WebView::class.java,
+                                String::class.java,
+                                Set::class.java
+                            )
+                            .invoke(null, b.webView, js, setOf("*"))
+                    } else {
+                        removeDesktopHandle()
+                        desktopScriptHandle = null
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("DesktopMode", "document-start script failed", e)
                 }
             }
         } catch (e: Throwable) {
-            // WebView too old or feature absent at runtime — UA-only desktop mode.
             android.util.Log.w("DesktopMode", "document-start spoof unavailable", e)
         }
+    }
+
+    private fun removeDesktopHandle() {
+        val h = desktopScriptHandle ?: return
+        try { h.javaClass.getMethod("remove").invoke(h) } catch (_: Throwable) {}
     }
 
     private fun toggleIncognito() {
