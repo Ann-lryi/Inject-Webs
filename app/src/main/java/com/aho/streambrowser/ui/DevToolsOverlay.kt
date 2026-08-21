@@ -12,6 +12,8 @@ import com.aho.streambrowser.detector.StreamDetector
 import com.aho.streambrowser.model.NetworkRequest
 import com.aho.streambrowser.model.StreamItem
 import com.aho.streambrowser.model.StreamType
+import com.aho.streambrowser.ui.devtools.CssTab
+import com.aho.streambrowser.ui.devtools.StorageTab
 import com.aho.streambrowser.util.*
 import kotlinx.coroutines.*
 
@@ -23,7 +25,16 @@ class DevToolsOverlay(
     private val webView:      WebView,
     private val activity:     MainActivity,
     private val onPlayStream: (StreamItem) -> Unit
-) : FrameLayout(context) {
+) : FrameLayout(context), com.aho.streambrowser.ui.devtools.DevToolsHost {
+
+    // DevToolsHost bridge (context comes from View.getContext(), webView from constructor)
+    override val hostContext: Context get() = context
+    override fun toast(msg: String) { Toast.makeText(context, msg, Toast.LENGTH_SHORT).show() }
+    override fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    override fun hostRefresh() { refresh() }
+    override fun copyText(text: String, msg: String) { activity.copyToClipboard(text, msg) }
+
+
 
     // ── Design tokens ─────────────────────────────────────────────────────────
     private val BG_PANEL   = Color.parseColor("#0D0D0D")
@@ -406,7 +417,7 @@ class DevToolsOverlay(
             3  -> contentArea.addView(buildCryptoTab())
             4  -> contentArea.addView(buildWsTab())
             5  -> contentArea.addView(buildHeadersTab())
-            6  -> contentArea.addView(buildStorageTab())
+            6  -> contentArea.addView(StorageTab(this).buildView())
             7  -> contentArea.addView(buildCssTab())
             8  -> contentArea.addView(buildTimelineTab())
             9  -> contentArea.addView(buildProxyTab())
@@ -969,8 +980,7 @@ class DevToolsOverlay(
     private fun buildConsoleTab()  = buildConsoleView()
     private fun buildCryptoTab()   = buildCryptoView()
     private fun buildWsTab()       = buildWsView()
-    private fun buildStorageTab()  = buildStorageView()
-    private fun buildCssTab()      = buildCssView()
+    private fun buildCssTab()      = CssTab(this).buildView()
     private fun buildTimelineTab() = buildTimelineView()
     private fun buildProxyTab()    = buildProxyView()
 
@@ -1498,65 +1508,7 @@ class DevToolsOverlay(
         sv.addView(inner); return sv
     }
 
-    // ── Storage, CSS, Timeline, Proxy — unchanged (no design reference provided) ──
-    private fun buildStorageView(): View {
-        val sv = ScrollView(context).apply { overScrollMode = View.OVER_SCROLL_NEVER }
-        val inner = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(16)) }
-        inner.addView(buildSectionHeader("localStorage + sessionStorage"))
-        val tvRes = buildMonoTv("Đang đọc...", TEXT_SEC, 9.5f).apply { setTextIsSelectable(true) }; inner.addView(tvRes)
-        var fullStorageJson = ""
-        webView.evaluateJavascript("""(function(){try{var ls={},ss={};for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);ls[k]=localStorage.getItem(k);}for(var i=0;i<sessionStorage.length;i++){var k=sessionStorage.key(i);ss[k]=sessionStorage.getItem(k);}return JSON.stringify({l:ls,s:ss});}catch(e){return '{"error":"'+e+'"}';}})()""") { raw ->
-            val clean = raw?.removeSurrounding("\"")?.replace("\\\"","\"") ?: "{}"
-            fullStorageJson = clean
-            post { try {
-                val j = org.json.JSONObject(clean); val sb = StringBuilder()
-                sb.appendLine("=== localStorage ===")
-                j.optJSONObject("l")?.keys()?.forEach { k0 -> val k = k0 as String; sb.appendLine("$k: ${j.optJSONObject("l")?.optString(k,"")?.take(100)}") }
-                sb.appendLine("\n=== sessionStorage ===")
-                j.optJSONObject("s")?.keys()?.forEach { k0 -> val k = k0 as String; sb.appendLine("$k: ${j.optJSONObject("s")?.optString(k,"")?.take(100)}") }
-                tvRes.text = sb
-            } catch(_:Exception){tvRes.text=clean} }
-        }
-        inner.addView(buildActionBtn("📋 Copy full JSON", ACCENT) {
-            if (fullStorageJson.isNotBlank()) activity.copyToClipboard(fullStorageJson, "Storage JSON copied (${fullStorageJson.length} chars)")
-            else toast("Chưa đọc xong, thử lại sau")
-        })
-        inner.addView(buildActionBtn("🗑 Clear localStorage", DANGER) {
-            webView.evaluateJavascript("localStorage.clear();void 0", null)
-            toast("localStorage cleared")
-        })
-        sv.addView(inner); return sv
-    }
 
-    private fun buildCssView(): View {
-        val sv = ScrollView(context).apply { overScrollMode = View.OVER_SCROLL_NEVER }
-        val inner = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(16)) }
-        inner.addView(buildSectionHeader("🎨 CSS Injector"))
-        val et = buildEditText("/* CSS here */\nbody { background: #000 !important; }").apply {
-            minLines = 5
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-            typeface = Typeface.MONOSPACE
-        }
-        inner.addView(et)
-        val btnRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-        btnRow.addView(buildActionBtn("▶ Inject", ACCENT) {
-            val css = et.text.toString().replace("`","\\`")
-            webView.evaluateJavascript("""(function(){var el=document.getElementById('__sb_css');if(!el){el=document.createElement('style');el.id='__sb_css';document.head.appendChild(el);}el.textContent=`$css`;return 'ok';})()""", null)
-            toast("CSS injected")
-        })
-        btnRow.addView(buildActionBtn("✖ Remove", DANGER) {
-            webView.evaluateJavascript("var e=document.getElementById('__sb_css');if(e)e.remove();'ok'", null)
-        })
-        inner.addView(btnRow)
-        listOf("🌑 Dark" to "* { background: #111 !important; color: #eee !important; }",
-               "🙈 Hide ads" to ".ad,.ads,[id*=ad],[class*=ad] { display:none!important; }",
-               "👁 Show hidden" to "[style*='display:none'],[hidden] { display:block!important; }",
-               "📐 Desktop layout" to "body { min-width:1280px!important; zoom:0.7; }",
-               "🔍 Highlight video" to "video { outline:3px solid #1DB954!important; }").forEach { (l,c) ->
-            inner.addView(buildActionBtn(l, BG_BADGE) { et.setText(c) })
-        }
-        sv.addView(inner); return sv
-    }
 
     private fun buildTimelineView(): View {
         val reqs = detector.requests.sortedBy { it.timestamp }
