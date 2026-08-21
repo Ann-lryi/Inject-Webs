@@ -22,7 +22,7 @@ import kotlinx.coroutines.*
 class DevToolsOverlay(
     context:    Context,
     private val detector:     StreamDetector,
-    private val webView:      WebView,
+    override val webView:       WebView,
     private val activity:     MainActivity,
     private val onPlayStream: (StreamItem) -> Unit
 ) : FrameLayout(context), com.aho.streambrowser.ui.devtools.DevToolsHost {
