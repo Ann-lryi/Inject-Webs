@@ -1757,9 +1757,7 @@ class DevToolsOverlay(
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
     }
 
-    private fun dp(v: Int) = (v * dp).toInt()
 
-    private fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
 
     private fun hexToBytes(h: String): ByteArray {
         val c = h.replace(":","").replace(" ","")
