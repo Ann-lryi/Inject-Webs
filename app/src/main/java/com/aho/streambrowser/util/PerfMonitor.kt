@@ -12,7 +12,7 @@ object PerfMonitor {
     private val frameCountAtLastReport = AtomicLong(0)
     private val jankAtLastReport = AtomicLong(0)
 
-    private val enabled: Boolean get() = try {
+    @PublishedApi internal val enabled: Boolean get() = try {
         Class.forName("com.aho.streambrowser.BuildConfig")
             .getField("DEBUG").getBoolean(null)
     } catch (_: Throwable) { false }
